@@ -24,6 +24,13 @@ pomProjectTemplate = '''
 </project>
 '''
 
+// --- JAR スキャン時のパス除外（glob 形式）---
+// 以下のパターンに一致するパスにある JAR はスキャン対象に含めません（例: test フォルダ配下を除外）
+// excludeJarPaths = [
+//     '**/test/**',
+//     '**/tests/**'
+// ]
+
 // --- dependency の除外・追加・置換（必要に応じてコメントを外して編集）---
 
 // 除外: 検出した dependency の groupId:artifactId を指定。pom に出力しません。

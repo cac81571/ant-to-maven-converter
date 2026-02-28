@@ -24,6 +24,8 @@ import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.prefs.Preferences
 import java.net.URLEncoder
+import java.nio.file.FileSystems
+import java.nio.file.Path
 
 class AntToMavenTool {
 
@@ -322,10 +324,30 @@ class AntToMavenTool {
 
     private void processDirectory(File projectDir, File outputPomFile) {
         log("ディレクトリをスキャン中: ${projectDir.absolutePath}")
-        
+
+        def excludeJarPathPatterns = config.excludeJarPaths instanceof Collection ? config.excludeJarPaths : []
+        def pathMatchers = excludeJarPathPatterns.collect { pattern ->
+            try {
+                FileSystems.default.getPathMatcher("glob:${pattern}")
+            } catch (Exception e) {
+                log("[警告] 除外パターンが無効です: ${pattern} - ${e.message}")
+                null
+            }
+        }.findAll { it != null }
+
         List<File> jars = []
         projectDir.eachFileRecurse {
             if (it.name.endsWith('.jar') && isRunning.get()) {
+                Path relativePath = projectDir.toPath().relativize(it.toPath())
+                String pathStr = relativePath.toString().replace(File.separator, '/')
+                def pathSegments = pathStr.isEmpty() ? [] : pathStr.split('/').toList()
+                Path normalizedForGlob = pathSegments.isEmpty()
+                    ? relativePath.getFileSystem().getPath("")
+                    : FileSystems.default.getPath(pathSegments[0], *pathSegments.drop(1))
+                if (pathMatchers.any { it.matches(normalizedForGlob) }) {
+                    log("[除外(JARパス)] ${pathStr}")
+                    return
+                }
                 jars << it
             }
         }
