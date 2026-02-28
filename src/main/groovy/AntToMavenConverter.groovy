@@ -190,12 +190,17 @@ class AntToMavenTool {
         // pom.xml 上書き確認（処理の先頭で実施）
         File outputPomFile = new File(projectDir, "pom.xml")
         if (outputPomFile.exists()) {
-            int result = JOptionPane.showConfirmDialog(mainFrame,
+            Object[] options = ["上書きする", "別名で保存", "処理中止"]
+            int result = JOptionPane.showOptionDialog(mainFrame,
                 "pom.xml は既に存在します。上書きしますか？",
                 "ファイルの上書き確認",
-                JOptionPane.YES_NO_CANCEL_OPTION)
-            if (result == JOptionPane.CANCEL_OPTION) return
-            if (result == JOptionPane.NO_OPTION) {
+                JOptionPane.DEFAULT_OPTION,
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                options[0])
+            if (result == 2 || result == JOptionPane.CLOSED_OPTION) return
+            if (result == 1) {
                 outputPomFile = new File(projectDir, "pom_generated_${System.currentTimeMillis()}.xml")
             }
         }
