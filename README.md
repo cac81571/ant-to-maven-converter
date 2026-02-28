@@ -1,2 +1,86 @@
-# ant-to-maven-converter
+# Ant to Maven Converter
+
 古い Ant プロジェクトの `lib` フォルダなどをスキャンし、JAR の SHA-1 を Maven Central と照合して **pom.xml** を自動生成する GUI ツールです。
+
+## 機能
+
+- **GUI 操作** … Swing によるウィンドウで、プロジェクトパス選択・実行・ログ確認が可能
+- **JAR の自動検出** … 指定ディレクトリ以下を再帰的にスキャンし、`.jar` を収集
+- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索
+- **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
+- **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード
+- **ローカル JAR の扱い** … Maven Central で見つからない JAR は `system` スコープで `pom.xml` に出力
+
+## 必要環境
+
+- **Java 17** 以上
+- **Maven 3.x**（ビルド用）
+
+## ビルド
+
+```bash
+mvn clean package
+```
+
+実行可能 JAR は `target/ant-to-maven-converter-1.0.0.jar` に生成されます（依存関係は shade で同梱）。
+
+## 実行方法
+
+### JAR から実行
+
+```bash
+java -jar target/ant-to-maven-converter-1.0.0.jar
+```
+
+### IDE から実行
+
+メインクラス `AntToMavenTool` の `main` メソッドを実行してください。
+
+## 使い方
+
+1. 起動すると **「Ant to Maven POM ジェネレーター」** ウィンドウが開きます。
+2. **プロジェクトのパス** に、変換したい Ant プロジェクトのルート（`lib` など JAR が含まれるディレクトリの親）を指定します。
+3. 必要に応じて **設定ファイル** のパスを選択（省略時は `~/.ant-to-maven-converter/ant-to-maven-default.groovy` を使用）。
+4. **「最新バージョンにアップグレード」** にチェックを入れると、検出した依存関係を最新版に差し替えます。
+5. **「実行」** をクリックすると、指定ディレクトリ以下がスキャンされ、`pom.xml` が生成されます。
+6. 既に `pom.xml` がある場合は上書き確認ダイアログが表示されます。
+
+生成された `pom.xml` はプロジェクトルート（指定したパス直下）に出力されます。
+
+## 設定ファイル
+
+設定は **Groovy ConfigSlurper** 形式で記述します。
+
+- **保存場所（デフォルト）**  
+  - Windows: `%USERPROFILE%\.ant-to-maven-converter\`  
+  - macOS/Linux: `~/.ant-to-maven-converter/`  
+  - ファイル名: `ant-to-maven-default.groovy`（初回起動時にサンプルが自動作成されます）
+
+### 主な設定項目
+
+| 項目 | 説明 |
+|------|------|
+| `excludeDependencies` | pom に出力しない `groupId:artifactId` のリスト |
+| `addDependencies` | 検出結果の先頭に追加する依存関係のリスト |
+| `replaceDependencies` | 検出した `groupId:artifactId` を別の依存関係（1:1 または 1:N）に置き換え |
+| `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |
+
+リポジトリ内のサンプルは `src/main/resources/ant-to-maven-default.groovy` を参照してください。
+
+## プロジェクト構成
+
+```
+ant-to-maven-converter/
+├── pom.xml
+├── README.md
+└── src/
+    └── main/
+        ├── groovy/
+        │   └── AntToMavenConverter.groovy   # メインクラス AntToMavenTool
+        └── resources/
+            └── ant-to-maven-default.groovy # 設定サンプル
+```
+
+## ライセンス
+
+このプロジェクトのライセンスはリポジトリのルートで定義されている場合があります。
