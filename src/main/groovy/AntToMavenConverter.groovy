@@ -62,7 +62,7 @@ class AntToMavenTool {
     }
 
     /**
-     * 設定ファイルの読み込み（存在しない場合はデフォルト作成）
+     * 設定ファイルの読み込み（存在しない場合は JAR 同梱の ant-to-maven-default.groovy をコピーして作成）
      */
     private void setupConfig() {
         File configDir = new File(CONFIG_DIR)
@@ -70,43 +70,18 @@ class AntToMavenTool {
 
         File configFile = new File(configDir, CONFIG_FILE)
         if (!configFile.exists()) {
-            configFile.text = """
-// Ant to Maven 変換ツール 設定ファイル
-// Groovy ConfigSlurper 形式
-
-// 生成されるpom.xmlから除外する依存関係 (group:artifact)
-excludes = [
-    'junit:junit',
-    'javax.servlet:servlet-api' // 通常はコンテナが提供するため除外
-]
-
-// 自動検出に関わらず強制的に追加する依存関係 (group:artifact:version)
-additions = [
-    'org.projectlombok:lombok:1.18.30'
-]
-
-// 検出されたアーティファクトを別のものに置き換える (Migration用)
-// キー: 検出された 'group:artifact'
-// 値: 置き換え先のリスト ['group:artifact:version']
-replacements = [
-    // 例: Struts時代の古いログライブラリをモダンなものに置換
-    'log4j:log4j': ['org.apache.logging.log4j:log4j-core:2.20.0', 'org.apache.logging.log4j:log4j-api:2.20.0'],
-    'commons-logging:commons-logging': ['org.slf4j:jcl-over-slf4j:2.0.7'],
-    
-    // 例: 日付バージョン(20040616など)になってしまうものを、正式なバージョンに固定する
-    // 'commons-io:commons-io': ['commons-io:commons-io:2.11.0']
-]
-
-// プロジェクト設定のデフォルト値
-project {
-    groupId = 'com.example.legacy'
-    artifactId = 'migrated-project'
-    version = '1.0.0-SNAPSHOT'
-    javaVersion = '17'
-}
-"""
+            def resourceUrl = getClass().getResource("/ant-to-maven-default.groovy")
+            if (resourceUrl != null) {
+                println "同梱リソースの絶対パス: ${resourceUrl.toString()}"
+                InputStream bundled = getClass().getResourceAsStream("/ant-to-maven-default.groovy")
+                configFile.text = bundled.getText("UTF-8")
+                bundled.close()
+            } else {
+                // クラスパスに同梱リソースがない場合（IDE実行時など）のフォールバック
+                println "ファイルが見つかりません。同梱リソースがクラスパスにありません（IDE実行時など）。"
+            }
         }
-        
+
         try {
             config = new ConfigSlurper().parse(configFile.toURI().toURL())
         } catch (Exception e) {
@@ -493,7 +468,7 @@ project {
 
         // 2. 追加設定の適用（要素は String "g:a:v" または Map(groupId, artifactId, version)）
         additions.each { add ->
-            String g, a, v
+            String g, a, v, s, c
             if (add instanceof String) {
                 def parts = add.split(':')
                 if (parts.length >= 3) { g = parts[0]; a = parts[1]; v = parts[2] }
@@ -501,6 +476,8 @@ project {
                 g = add.groupId ?: add.get('groupId')?.toString()
                 a = add.artifactId ?: add.get('artifactId')?.toString()
                 v = add.version ?: add.get('version')?.toString()
+                s = add.scope ?: add.get('scope')?.toString()
+                c = add.classifier ?: add.get('classifier')?.toString()
             }
             if (g && a && v) {
                 String key = "${g}:${a}"
@@ -510,6 +487,8 @@ project {
                         groupId: g,
                         artifactId: a,
                         version: v,
+                        scope: s,
+                        classifier: c,
                         dependencyComment: "追加: ${g}:${a}:${v}"
                     )
                     processedKeys.add(key)
@@ -731,6 +710,9 @@ project {
                     if (dep.systemPath) {
                         systemPath(dep.systemPath)
                     }
+                    if (dep.classifier) {
+                        classifier(dep.classifier)
+                    }
                 }
             }
         }
@@ -809,6 +791,7 @@ project {
         String artifactId
         String version
         String scope = "compile"
+        String classifier
         String systemPath
         File originalFile
         String dependencyComment
