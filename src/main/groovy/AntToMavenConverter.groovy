@@ -353,24 +353,12 @@ class AntToMavenTool {
                     
                     log("[発見] ${jar.name} -> ${artifact.g}:${artifact.a}:${artifact.v}")
                     
-                    // バージョンアップグレードチェック
-                    def versionComment = null
-                    if (latestVersionCheck.selected) {
-                        String latest = getLatestVersion(artifact.g, artifact.a)
-                        if (latest && latest != artifact.v) {
-                            log("   -> 最新版へアップグレード: ${latest}")
-                            versionComment = "バージョンアップ: ${artifact.v} -> ${latest}"
-                            artifact.v = latest
-                        }
-                    }
-                    
                     scannedDeps << new Dependency(
                         groupId: artifact.g,
                         artifactId: artifact.a,
                         version: artifact.v,
                         scope: 'compile',
-                        originalFile: jar,
-                        versionComment: versionComment
+                        originalFile: jar
                     )
                 } else {
                     log("[未発見] ${jar.name} -> System Scope として維持")
@@ -493,6 +481,22 @@ class AntToMavenTool {
                     )
                     processedKeys.add(key)
                 }
+            }
+        }
+
+        // 3. バージョンアップの適用（「依存バージョンを最新に置き換える」がオンのとき、追加・除外・置換後の一覧に対して実施）
+        if (latestVersionCheck?.selected) {
+            log("\n--- バージョンアップの適用 ---")
+            finalDependencies.each { dep ->
+                if (!isRunning.get()) return
+                if (dep.scope == 'system' || dep.systemPath) return
+                String latest = getLatestVersion(dep.groupId, dep.artifactId)
+                if (latest && latest != dep.version) {
+                    log("  ${dep.groupId}:${dep.artifactId} ${dep.version} -> ${latest}")
+                    dep.versionComment = "バージョンアップ: ${dep.version} -> ${latest}"
+                    dep.version = latest
+                }
+                Thread.sleep(200)
             }
         }
 
