@@ -690,7 +690,7 @@ class AntToMavenTool {
     private void buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys = []) {
         builder.dependencies {
             if (excludedKeys) {
-                mkp.yieldUnescaped('\n    <!-- 除外: ' + excludedKeys.join(', ') + ' -->')
+                excludedKeys.each { key -> mkp.yieldUnescaped('\n    <!-- 除外: ' + key + ' -->') }
             }
             finalDependencies.sort { it.groupId }.each { dep ->
                 if (dep.dependencyComment) {
