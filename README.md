@@ -1,86 +1,98 @@
 # Ant to Maven Converter
 
-古い Ant プロジェクトの `lib` フォルダなどをスキャンし、JAR の SHA-1 を Maven Central と照合して **pom.xml** を自動生成する GUI ツールです。
+A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-1 hashes, looks them up on Maven Central, and **generates pom.xml** automatically.
 
-## 機能
+**日本語:** [README_ja.md](README_ja.md)
 
-- **GUI 操作** … Swing によるウィンドウで、プロジェクトパス選択・実行・ログ確認が可能
-- **JAR の自動検出** … 指定ディレクトリ以下を再帰的にスキャンし、`.jar` を収集
-- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索
-- **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
-- **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード
-- **ローカル JAR の扱い** … Maven Central で見つからない JAR は `system` スコープで `pom.xml` に出力
+---
 
-## 必要環境
+## Features
 
-- **Java 17** 以上
-- **Maven 3.x**（ビルド用）
+- **GUI** … Swing window for project path selection, execution, and log viewing
+- **JAR discovery** … Recursively scans the chosen directory and collects `.jar` files
+- **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search API](https://search.maven.org/) for groupId / artifactId / version
+- **Config file** … Groovy ConfigSlurper format for flexible “exclude”, “add”, and “replace” rules
+- **Latest version** … Optional upgrade of detected artifacts to their latest versions
+- **Local JARs** … JARs not found on Maven Central are written to `pom.xml` with `system` scope
+- **i18n** … UI language switch: 日本語 / English (dropdown)
+- **JAR path exclusion** … Glob patterns in config (e.g. `**/test/**`) to exclude paths from scanning
 
-## ビルド
+## Requirements
+
+- **Java 17** or later
+- **Maven 3.x** (for building)
+
+## Build
 
 ```bash
 mvn clean package
 ```
 
-実行可能 JAR は `target/ant-to-maven-converter-1.0.0.jar` に生成されます（依存関係は shade で同梱）。
+The runnable JAR is produced at `target/ant-to-maven-converter-1.0.0.jar` (dependencies shaded).
 
-## 実行方法
+## Run
 
-### JAR から実行
+### From JAR
 
 ```bash
 java -jar target/ant-to-maven-converter-1.0.0.jar
 ```
 
-### IDE から実行
+### From IDE
 
-メインクラス `AntToMavenTool` の `main` メソッドを実行してください。
+Run the `main` method of the `AntToMavenTool` class.
 
-## 使い方
+## Usage
 
-1. 起動すると **「Ant to Maven POM ジェネレーター」** ウィンドウが開きます。
-2. **プロジェクトのパス** に、変換したい Ant プロジェクトのルート（`lib` など JAR が含まれるディレクトリの親）を指定します。
-3. 必要に応じて **設定ファイル** のパスを選択（省略時は `~/.ant-to-maven-converter/ant-to-maven-default.groovy` を使用）。
-4. **「最新バージョンにアップグレード」** にチェックを入れると、検出した依存関係を最新版に差し替えます。
-5. **「実行」** をクリックすると、指定ディレクトリ以下がスキャンされ、`pom.xml` が生成されます。
-6. 既に `pom.xml` がある場合は上書き確認ダイアログが表示されます。
+1. On startup the **“Ant to Maven POM Generator”** window opens.
+2. Set **Project folder** to the root of the Ant project to convert (parent of directories that contain JARs, e.g. `lib`).
+3. Optionally choose a **config file** path (default: `~/.ant-to-maven-converter/ant-to-maven-default.groovy`).
+4. Check **“Replace dependency versions with latest”** to upgrade detected dependencies to their latest versions.
+5. Click **“Generate POM”** to scan the directory and generate `pom.xml`.
+6. If `pom.xml` already exists, you can choose Overwrite, Save as, or Cancel.
 
-生成された `pom.xml` はプロジェクトルート（指定したパス直下）に出力されます。
+The generated `pom.xml` is written under the project root (the path you specified).
 
-## 設定ファイル
+## Config file
 
-設定は **Groovy ConfigSlurper** 形式で記述します。
+Configuration is in **Groovy ConfigSlurper** format.
 
-- **保存場所（デフォルト）**  
+- **Default location**  
   - Windows: `%USERPROFILE%\.ant-to-maven-converter\`  
   - macOS/Linux: `~/.ant-to-maven-converter/`  
-  - ファイル名: `ant-to-maven-default.groovy`（初回起動時にサンプルが自動作成されます）
+  - File: `ant-to-maven-default.groovy` (a sample is created on first run)
 
-### 主な設定項目
+### Main options
 
-| 項目 | 説明 |
-|------|------|
-| `excludeDependencies` | pom に出力しない `groupId:artifactId` のリスト |
-| `addDependencies` | 検出結果の先頭に追加する依存関係のリスト |
-| `replaceDependencies` | 検出した `groupId:artifactId` を別の依存関係（1:1 または 1:N）に置き換え |
-| `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |
+| Option | Description |
+|--------|-------------|
+| `excludeDependencies` | List of `groupId:artifactId` to omit from the generated pom |
+| `excludeJarPaths` | Glob patterns for JAR paths to exclude from scanning (e.g. `**/test/**`) |
+| `addDependencies` | Dependencies to add at the top of the result |
+| `replaceDependencies` | Replace detected `groupId:artifactId` with other dependency(ies) (1:1 or 1:N) |
+| `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
 
-リポジトリ内のサンプルは `src/main/resources/ant-to-maven-default.groovy` を参照してください。
+See the sample in the repo: `src/main/resources/ant-to-maven-default.groovy`.
 
-## プロジェクト構成
+## Project layout
 
 ```
 ant-to-maven-converter/
 ├── pom.xml
 ├── README.md
+├── README_ja.md
+├── docs/
+│   └── METHODS.md
 └── src/
     └── main/
         ├── groovy/
-        │   └── AntToMavenConverter.groovy   # メインクラス AntToMavenTool
+        │   └── AntToMavenConverter.groovy   # Main class AntToMavenTool
         └── resources/
-            └── ant-to-maven-default.groovy # 設定サンプル
+            ├── ant-to-maven-default.groovy # Config sample
+            ├── messages_ja.properties       # Japanese messages
+            └── messages_en.properties      # English messages
 ```
 
-## ライセンス
+## License
 
-このプロジェクトのライセンスはリポジトリのルートで定義されている場合があります。
+The project license is defined at the repository root, if applicable.

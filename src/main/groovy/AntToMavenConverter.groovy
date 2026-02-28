@@ -26,6 +26,9 @@ import java.util.prefs.Preferences
 import java.net.URLEncoder
 import java.nio.file.FileSystems
 import java.nio.file.Path
+import java.text.MessageFormat
+import java.util.Locale
+import java.util.Properties
 
 class AntToMavenTool {
 
@@ -36,12 +39,22 @@ class AntToMavenTool {
     private static final String PREF_NODE = "com.example.tools.ant2maven"
     private static final String PREF_KEY_HISTORY = "pathHistory"
     private static final String PREF_KEY_CONFIG_HISTORY = "configPathHistory"
+    private static final String PREF_KEY_LANG = "language"
+    private static final String[] LANG_CODES = ["ja", "en"]
 
     // --- UI コンポーネント ---
     private JFrame mainFrame
     private JTextArea logArea
     private JComboBox<String> pathCombo
     private JComboBox<String> configPathCombo
+    private JComboBox<String> langCombo
+    private JLabel langLabel
+    private JLabel projectRootLabel
+    private JLabel configFileLabel
+    private JButton showFolderProjectBtn
+    private JButton showFolderConfigBtn
+    private JButton exportCsvBtn
+    private JButton importCsvBtn
     private JCheckBox latestVersionCheck
     private JButton runButton
     private JButton stopButton
@@ -53,14 +66,62 @@ class AntToMavenTool {
     private ConfigObject config
     private Preferences prefs = Preferences.userRoot().node(PREF_NODE)
     private JsonSlurper jsonSlurper = new JsonSlurper()
+    private Properties i18nMessages = new Properties()
 
     static void main(String[] args) {
         new AntToMavenTool().run()
     }
 
     void run() {
+        // デフォルト言語は en。保存値が無い場合は OS が ja のときのみ ja、それ以外は en
+        String savedLang = prefs.get(PREF_KEY_LANG, null)
+        if (savedLang == null || savedLang.isEmpty()) {
+            savedLang = ("ja" == Locale.getDefault().language) ? "ja" : "en"
+        }
+        loadI18n(savedLang)
         setupConfig()
         setupUI()
+    }
+
+    /** 指定ロケールのメッセージプロパティを読み込む（UTF-8） */
+    private void loadI18n(String lang) {
+        if (lang == null || lang.isEmpty()) lang = "ja"
+        String resource = ("en" == lang) ? "/messages_en.properties" : "/messages_ja.properties"
+        def stream = getClass().getResourceAsStream(resource)
+        if (stream == null) stream = getClass().getResourceAsStream("/messages_ja.properties")
+        if (stream != null) {
+            try {
+                i18nMessages.clear()
+                i18nMessages.load(new InputStreamReader(stream, "UTF-8"))
+            } finally {
+                stream.close()
+            }
+        }
+    }
+
+    /** 言語切り替え時にUIの表示文言を再適用する */
+    private void refreshUIStrings() {
+        if (mainFrame != null) mainFrame.title = i18n('app.title')
+        if (langLabel != null) langLabel.text = i18n('ui.language')
+        if (projectRootLabel != null) projectRootLabel.text = i18n('ui.projectRootPath')
+        if (configFileLabel != null) configFileLabel.text = i18n('ui.configFile')
+        if (showFolderProjectBtn != null) showFolderProjectBtn.text = i18n('ui.showFolder')
+        if (showFolderConfigBtn != null) showFolderConfigBtn.text = i18n('ui.showFolder')
+        if (latestVersionCheck != null) latestVersionCheck.text = i18n('ui.latestVersionReplace')
+        if (runButton != null) runButton.text = i18n('ui.generatePom')
+        if (stopButton != null) stopButton.text = i18n('ui.stop')
+        if (progressBar != null) progressBar.string = i18n('ui.ready')
+        if (exportCsvBtn != null) exportCsvBtn.text = i18n('ui.exportCsv')
+        if (importCsvBtn != null) importCsvBtn.text = i18n('ui.importCsv')
+    }
+
+    private String i18n(String key) {
+        return i18nMessages.getProperty(key, key)
+    }
+
+    private String i18n(String key, Object... args) {
+        String template = i18nMessages.getProperty(key, key)
+        return (args == null || args.length == 0) ? template : MessageFormat.format(template, args)
     }
 
     /**
@@ -115,39 +176,53 @@ class AntToMavenTool {
         // 履歴のロード
         String historyStr = prefs.get(PREF_KEY_HISTORY, "")
         List<String> history = historyStr ? historyStr.split("###").toList() : []
+        String savedLang = prefs.get(PREF_KEY_LANG, "en")
+        int langIndex = LANG_CODES.findIndexOf { it == savedLang }
+        if (langIndex < 0) langIndex = 0
 
         SwingBuilder swing = new SwingBuilder()
         swing.edt {
-            mainFrame = frame(title: 'Ant to Maven POM ジェネレーター', size: [800, 600],
+            mainFrame = frame(title: i18n('app.title'), size: [800, 600],
                     defaultCloseOperation: closeOperation, locationRelativeTo: null) {
                 borderLayout()
 
                 // 上部: 設定エリア
                 panel(constraints: BorderLayout.NORTH) {
                     boxLayout(axis: BoxLayout.Y_AXIS)
-                    
+
                     panel(alignmentX: 0f) {
                         flowLayout(alignment: FlowLayout.LEFT)
-                        label(text: 'プロジェクトルートパス:')
+                        projectRootLabel = label(text: i18n('ui.projectRootPath'))
                         pathCombo = comboBox(editable: true, items: history, preferredSize: [400, 25])
-                        button(text: 'フォルダ表示', actionPerformed: { openProjectFolder() })
+                        showFolderProjectBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openProjectFolder() })
+                        langLabel = label(text: i18n('ui.language'))
+                        langCombo = comboBox(items: LANG_CODES.collect { i18n("lang.${it}") }, selectedIndex: langIndex, preferredSize: [85, 22],
+                                actionPerformed: {
+                                    int idx = langCombo.selectedIndex
+                                    if (idx >= 0 && idx < LANG_CODES.length) {
+                                        String lang = LANG_CODES[idx]
+                                        prefs.put(PREF_KEY_LANG, lang)
+                                        loadI18n(lang)
+                                        refreshUIStrings()
+                                    }
+                                })
                     }
 
                     panel(alignmentX: 0f) {
                         flowLayout(alignment: FlowLayout.LEFT)
-                        label(text: "設定ファイル:")
+                        configFileLabel = label(text: i18n('ui.configFile'))
                         def defaultConfigPath = new File(CONFIG_DIR, CONFIG_FILE).absolutePath
                         def configHistoryStr = prefs.get(PREF_KEY_CONFIG_HISTORY, defaultConfigPath)
                         def configHistory = configHistoryStr ? configHistoryStr.split("###") as List : [defaultConfigPath]
                         configPathCombo = comboBox(editable: true, items: configHistory, preferredSize: [450, 25])
-                        button(text: 'フォルダ表示', actionPerformed: { openConfigFolder() })
+                        showFolderConfigBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openConfigFolder() })
                     }
 
                     panel(alignmentX: 0f) {
                         flowLayout(alignment: FlowLayout.LEFT)
-                        latestVersionCheck = checkBox(text: '依存バージョンを最新に置き換える', selected: true)
-                        runButton = button(text: 'POM生成', actionPerformed: { startProcess() })
-                        stopButton = button(text: '中止', enabled: false, actionPerformed: { stopProcess() })
+                        latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
+                        runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
+                        stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
                     }
                 }
 
@@ -159,19 +234,19 @@ class AntToMavenTool {
                 // 下部: コントロール
                 panel(constraints: BorderLayout.SOUTH) {
                     borderLayout()
-                    progressBar = progressBar(visible: true, stringPainted: true, string: "準備完了")
+                    progressBar = progressBar(visible: true, stringPainted: true, string: i18n('ui.ready'))
                     
                     panel(constraints: BorderLayout.EAST) {
                         flowLayout()
-                        button(text: '依存関係CSVエクスポート', actionPerformed: { exportDependenciesToCsv() })
-                        button(text: '依存関係CSVインポート', actionPerformed: { importDependenciesFromCsv() })
+                        exportCsvBtn = button(text: i18n('ui.exportCsv'), actionPerformed: { exportDependenciesToCsv() })
+                        importCsvBtn = button(text: i18n('ui.importCsv'), actionPerformed: { importDependenciesFromCsv() })
                     }
                     widget(progressBar, constraints: BorderLayout.CENTER)
                 }
             }
         }
         mainFrame.visible = true
-        log("アプリケーションを開始しました。 モード: " + (isJarExecution ? "JAR" : "Script/IDE"))
+        log(i18n('log.appStarted', isJarExecution ? "JAR" : "Script/IDE"))
     }
 
     // --- ロジック ---
@@ -179,23 +254,23 @@ class AntToMavenTool {
     private void startProcess() {
         String path = pathCombo.selectedItem?.toString()
         if (!path) {
-            JOptionPane.showMessageDialog(mainFrame, "プロジェクトのパスを選択してください。", "エラー", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.selectProjectPath'), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
             return
         }
 
         File projectDir = new File(path)
         if (!projectDir.exists() || !projectDir.isDirectory()) {
-            JOptionPane.showMessageDialog(mainFrame, "無効なディレクトリパスです。", "エラー", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.invalidDirectory'), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
             return
         }
 
         // pom.xml 上書き確認（処理の先頭で実施）
         File outputPomFile = new File(projectDir, "pom.xml")
         if (outputPomFile.exists()) {
-            Object[] options = ["上書きする", "別名で保存", "処理中止"]
+            Object[] options = [i18n('overwrite.option'), i18n('overwrite.saveAs'), i18n('overwrite.cancel')]
             int result = JOptionPane.showOptionDialog(mainFrame,
-                "pom.xml は既に存在します。上書きしますか？",
-                "ファイルの上書き確認",
+                i18n('overwrite.prompt'),
+                i18n('overwrite.title'),
                 JOptionPane.DEFAULT_OPTION,
                 JOptionPane.QUESTION_MESSAGE,
                 null,
@@ -223,10 +298,10 @@ class AntToMavenTool {
             if (configFile.exists()) {
                 config = new ConfigSlurper().parse(configFile.toURI().toURL())
                 saveConfigPathHistory(configPath)
-                log("設定ファイルを再読み込みしました: ${configPath}")
+                log(i18n('log.configReloaded', configPath))
             }
         } catch (Exception e) {
-            log("設定読み込み警告: ${e.message}")
+            log(i18n('log.configLoadWarning', e.message))
         }
 
         // バックグラウンドスレッドで実行
@@ -235,7 +310,7 @@ class AntToMavenTool {
             try {
                 processDirectory(projectDir, pomOut)
             } catch (Exception e) {
-                log("エラー: ${e.message}")
+                log(i18n('msg.error') + ": ${e.message}")
                 e.printStackTrace()
             } finally {
                 SwingUtilities.invokeLater {
@@ -243,7 +318,7 @@ class AntToMavenTool {
                     runButton.enabled = true
                     stopButton.enabled = false
                     pathCombo.enabled = true
-                    progressBar.string = "完了"
+                    progressBar.string = i18n('ui.done')
                     progressBar.value = 100
                 }
             }
@@ -253,7 +328,7 @@ class AntToMavenTool {
     private void stopProcess() {
         if (isRunning.get()) {
             isRunning.set(false)
-            log("停止要求を受け付けました... 現在の処理の完了を待っています。")
+            log(i18n('log.stopRequested'))
         }
     }
 
@@ -264,7 +339,7 @@ class AntToMavenTool {
             path = new File(CONFIG_DIR, CONFIG_FILE).absolutePath
         }
         File dir = new File(path).parentFile ?: new File(CONFIG_DIR)
-        openFolder(dir, '設定フォルダ')
+        openFolder(dir, i18n('msg.dialogTitle.configFolder'))
     }
 
     /** 設定ファイルパスを履歴に追加して永続化 */
@@ -285,27 +360,28 @@ class AntToMavenTool {
     private void openProjectFolder() {
         String path = pathCombo?.selectedItem?.toString()
         if (!path?.trim()) {
-            JOptionPane.showMessageDialog(mainFrame, "プロジェクトのパスを選択してください。", "フォルダ表示", JOptionPane.WARNING_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.selectProjectPath'), i18n('msg.dialogTitle.folder'), JOptionPane.WARNING_MESSAGE)
             return
         }
         File dir = new File(path)
         if (!dir.exists() || !dir.directory) {
-            JOptionPane.showMessageDialog(mainFrame, "無効なディレクトリパスです。", "フォルダ表示", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.invalidDirectory'), i18n('msg.dialogTitle.folder'), JOptionPane.ERROR_MESSAGE)
             return
         }
-        openFolder(dir, 'フォルダ表示')
+        openFolder(dir, i18n('msg.dialogTitle.folder'))
     }
 
     /** フォルダを開く。失敗時はエラーダイアログを表示 */
-    private void openFolder(File folder, String dialogTitle = 'エラー') {
+    private void openFolder(File folder, String dialogTitle = null) {
+        if (dialogTitle == null) dialogTitle = i18n('msg.error')
         if (folder == null || !folder.exists() || !folder.directory) {
-            JOptionPane.showMessageDialog(mainFrame, "フォルダが見つかりません: ${folder?.absolutePath}", dialogTitle, JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.folderNotFound', folder?.absolutePath ?: ''), dialogTitle, JOptionPane.ERROR_MESSAGE)
             return
         }
         try {
             Desktop.getDesktop().open(folder)
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(mainFrame, "フォルダを開けませんでした: ${e.message}", dialogTitle, JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.folderOpenFailed', e.message), dialogTitle, JOptionPane.ERROR_MESSAGE)
         }
     }
 
@@ -323,14 +399,14 @@ class AntToMavenTool {
     }
 
     private void processDirectory(File projectDir, File outputPomFile) {
-        log("ディレクトリをスキャン中: ${projectDir.absolutePath}")
+        log(i18n('log.scanning', projectDir.absolutePath))
 
         def excludeJarPathPatterns = config.excludeJarPaths instanceof Collection ? config.excludeJarPaths : []
         def pathMatchers = excludeJarPathPatterns.collect { pattern ->
             try {
                 FileSystems.default.getPathMatcher("glob:${pattern}")
             } catch (Exception e) {
-                log("[警告] 除外パターンが無効です: ${pattern} - ${e.message}")
+                log(i18n('log.warnInvalidExcludePattern', pattern, e.message))
                 null
             }
         }.findAll { it != null }
@@ -345,7 +421,7 @@ class AntToMavenTool {
                     ? relativePath.getFileSystem().getPath("")
                     : FileSystems.default.getPath(pathSegments[0], *pathSegments.drop(1))
                 if (pathMatchers.any { it.matches(normalizedForGlob) }) {
-                    log("[除外(JARパス)] ${pathStr}")
+                    log(i18n('log.excludedJarPath', pathStr))
                     return
                 }
                 jars << it
@@ -353,11 +429,11 @@ class AntToMavenTool {
         }
 
         if (jars.isEmpty()) {
-            log("JARファイルが見つかりませんでした。")
+            log(i18n('log.noJarsFound'))
             return
         }
 
-        log("${jars.size()} 個のJARが見つかりました。解析を開始します...")
+        log(i18n('log.jarsFound', jars.size().toString()))
         
         List<Dependency> scannedDeps = []
         int count = 0
@@ -366,7 +442,7 @@ class AntToMavenTool {
             if (!isRunning.get()) break
             
             count++
-            updateProgress(count, jars.size(), "${jar.name} を解析中...")
+            updateProgress(count, jars.size(), i18n('log.analyzing', jar.name))
             
             try {
                 String sha1 = calculateSha1(jar)
@@ -375,10 +451,10 @@ class AntToMavenTool {
                 if (artifact) {
                     // 日付形式バージョンの警告チェック (例: 20040616)
                     if (artifact.v ==~ /^\d{8}$/) {
-                        log("[警告] ${artifact.g}:${artifact.a} は日付形式のバージョンです: ${artifact.v}。設定ファイルでの置換を推奨します。")
+                        log(i18n('log.warnDateVersion', artifact.g, artifact.a, artifact.v))
                     }
                     
-                    log("[発見] ${jar.name} -> ${artifact.g}:${artifact.a}:${artifact.v}")
+                    log(i18n('log.found', jar.name, artifact.g, artifact.a, artifact.v))
                     
                     scannedDeps << new Dependency(
                         groupId: artifact.g,
@@ -388,7 +464,7 @@ class AntToMavenTool {
                         originalFile: jar
                     )
                 } else {
-                    log("[未発見] ${jar.name} -> System Scope として維持")
+                    log(i18n('log.notFound', jar.name))
                     // プロジェクトルートからの相対パスを計算
                     String relativePath = getRelativePath(projectDir, jar)
                     
@@ -399,11 +475,11 @@ class AntToMavenTool {
                         scope: 'system',
                         systemPath: "\${project.basedir}/${relativePath}",
                         originalFile: jar,
-                        dependencyComment: "Maven Central で見つかりませんでした。system スコープで追加します。"
+                        dependencyComment: i18n('comment.systemScope')
                     )
                 }
             } catch (Exception e) {
-                log("[エラー] ${jar.name} の処理に失敗しました: ${e.message}")
+                log(i18n('log.errorProcessing', jar.name, e.message))
             }
             
             // APIレートリミット対策
@@ -416,8 +492,8 @@ class AntToMavenTool {
     }
 
     private void generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile) {
-        updateProgress(100, 100, "pom.xml を生成中...")
-        log("\n--- 設定ルールの適用 ---")
+        updateProgress(100, 100, i18n('log.generatingPom'))
+        log("\n" + i18n('log.applyRules'))
 
         List<Dependency> finalDependencies = []
         Set<String> processedKeys = new HashSet<>()
@@ -436,7 +512,7 @@ class AntToMavenTool {
             
             // Exclude check
             if (excludes.contains(key)) {
-                log("除外(Excluded): ${key}")
+                log(i18n('log.excluded', key))
                 excludedKeys << key
                 return
             }
@@ -447,7 +523,7 @@ class AntToMavenTool {
                 def toList = (replacementVal instanceof Map && replacementVal.to != null)
                     ? (replacementVal.to instanceof Collection ? replacementVal.to : [replacementVal.to])
                     : (replacementVal instanceof Collection ? replacementVal : [replacementVal])
-                log("置換(Replaced): ${key} -> ${toList}")
+                log(i18n('log.replaced', key, toList.toString()))
                 toList.each { r ->
                     String g, a, v
                     if (r instanceof String) {
@@ -465,7 +541,7 @@ class AntToMavenTool {
                                 groupId: g,
                                 artifactId: a,
                                 version: v,
-                                dependencyComment: "置換: ${key} -> ${g}:${a}:${v}"
+                                dependencyComment: i18n('comment.replace', key, g, a, v)
                             )
                             processedKeys.add(newKey)
                         }
@@ -497,14 +573,14 @@ class AntToMavenTool {
             if (g && a && v) {
                 String key = "${g}:${a}"
                 if (!processedKeys.contains(key)) {
-                    log("追加(Added): ${g}:${a}:${v}")
+                    log(i18n('log.added', g, a, v))
                     finalDependencies << new Dependency(
                         groupId: g,
                         artifactId: a,
                         version: v,
                         scope: s,
                         classifier: c,
-                        dependencyComment: "追加: ${g}:${a}:${v}"
+                        dependencyComment: i18n('comment.add', g, a, v)
                     )
                     processedKeys.add(key)
                 }
@@ -513,14 +589,14 @@ class AntToMavenTool {
 
         // 3. バージョンアップの適用（「依存バージョンを最新に置き換える」がオンのとき、追加・除外・置換後の一覧に対して実施）
         if (latestVersionCheck?.selected) {
-            log("\n--- バージョンアップの適用 ---")
+            log("\n" + i18n('log.versionUpgrade'))
             finalDependencies.each { dep ->
                 if (!isRunning.get()) return
                 if (dep.scope == 'system' || dep.systemPath) return
                 String latest = getLatestVersion(dep.groupId, dep.artifactId)
                 if (latest && latest != dep.version) {
-                    log("  ${dep.groupId}:${dep.artifactId} ${dep.version} -> ${latest}")
-                    dep.versionComment = "バージョンアップ: ${dep.version} -> ${latest}"
+                    log(i18n('log.versionUpgraded', dep.groupId, dep.artifactId, dep.version, latest))
+                    dep.versionComment = i18n('comment.versionUpgrade', dep.version, latest)
                     dep.version = latest
                 }
                 Thread.sleep(200)
@@ -572,8 +648,8 @@ class AntToMavenTool {
         }
 
         outputPomFile.text = writer.toString()
-        log("\n成功: ${outputPomFile.name} を生成しました。")
-        JOptionPane.showMessageDialog(mainFrame, "POMの生成が完了しました！\n保存先: ${outputPomFile.absolutePath}")
+        log("\n" + i18n('log.pomSuccess', outputPomFile.name))
+        JOptionPane.showMessageDialog(mainFrame, i18n('msg.pomComplete', outputPomFile.absolutePath))
     }
 
     /** 選択中のプロジェクトフォルダと pom.xml を返す。無効なら null */
@@ -607,18 +683,18 @@ class AntToMavenTool {
         File pomFile = getProjectPomFile()
         if (!pomFile) {
             JOptionPane.showMessageDialog(mainFrame,
-                "プロジェクトのパスを選択し、対象フォルダに pom.xml が存在する必要があります。",
-                "依存関係CSVエクスポート", JOptionPane.WARNING_MESSAGE)
+                i18n('msg.export.needPom'),
+                i18n('ui.exportCsv'), JOptionPane.WARNING_MESSAGE)
             return
         }
         try {
             List<Dependency> toExport = parseDependenciesFromPom(pomFile)
             if (toExport.isEmpty()) {
-                JOptionPane.showMessageDialog(mainFrame, "pom.xml に依存関係がありません。", "依存関係CSVエクスポート", JOptionPane.INFORMATION_MESSAGE)
+                JOptionPane.showMessageDialog(mainFrame, i18n('msg.export.noDeps'), i18n('ui.exportCsv'), JOptionPane.INFORMATION_MESSAGE)
                 return
             }
             def fc = new JFileChooser()
-            fc.dialogTitle = "依存関係CSVの保存先"
+            fc.dialogTitle = i18n('msg.export.saveTitle')
             fc.currentDirectory = pomFile.parentFile
             fc.selectedFile = new File(pomFile.parentFile, "dependencies.csv")
             if (fc.showSaveDialog(mainFrame) != JFileChooser.APPROVE_OPTION) return
@@ -629,10 +705,10 @@ class AntToMavenTool {
                     w.writeLine("${dep.groupId},${dep.artifactId},${dep.version},${dep.scope ?: 'compile'}")
                 }
             }
-            log("依存関係をCSVにエクスポートしました: ${f.absolutePath} (${toExport.size()}件)")
-            JOptionPane.showMessageDialog(mainFrame, "${toExport.size()}件の依存関係をエクスポートしました。\n${f.absolutePath}", "依存関係CSVエクスポート", JOptionPane.INFORMATION_MESSAGE)
+            log(i18n('log.exported', f.absolutePath, toExport.size().toString()))
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.export.done', toExport.size().toString(), f.absolutePath), i18n('ui.exportCsv'), JOptionPane.INFORMATION_MESSAGE)
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(mainFrame, "エクスポートに失敗しました: ${e.message}", "エラー", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.export.failed', e.message), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
         }
     }
 
@@ -641,24 +717,24 @@ class AntToMavenTool {
         File pomFile = getProjectPomFile()
         if (!pomFile) {
             JOptionPane.showMessageDialog(mainFrame,
-                "プロジェクトのパスを選択し、対象の pom.xml がフォルダに存在する必要があります。",
-                "依存関係CSVインポート", JOptionPane.WARNING_MESSAGE)
+                i18n('msg.import.needPom'),
+                i18n('ui.importCsv'), JOptionPane.WARNING_MESSAGE)
             return
         }
         def fc = new JFileChooser()
-        fc.dialogTitle = "依存関係CSVを選択"
+        fc.dialogTitle = i18n('msg.import.selectTitle')
         fc.currentDirectory = pomFile.parentFile
         if (fc.showOpenDialog(mainFrame) != JFileChooser.APPROVE_OPTION) return
         File csvFile = fc.selectedFile
         if (!csvFile.exists() || !csvFile.canRead()) {
-            JOptionPane.showMessageDialog(mainFrame, "ファイルを読み込めません: ${csvFile.absolutePath}", "エラー", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.fileUnreadable', csvFile.absolutePath), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
             return
         }
         try {
             List<Dependency> csvDeps = []
             def lines = csvFile.readLines('UTF-8')
             if (lines.isEmpty()) {
-                JOptionPane.showMessageDialog(mainFrame, "CSVにデータがありません。", "依存関係CSVインポート", JOptionPane.WARNING_MESSAGE)
+                JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.noData'), i18n('ui.importCsv'), JOptionPane.WARNING_MESSAGE)
                 return
             }
             boolean hasHeader = lines[0].toLowerCase().contains('groupid') || lines[0].toLowerCase().contains('groupId')
@@ -677,7 +753,7 @@ class AntToMavenTool {
                 }
             }
             if (csvDeps.isEmpty()) {
-                JOptionPane.showMessageDialog(mainFrame, "CSVに有効な依存関係がありません。", "依存関係CSVインポート", JOptionPane.WARNING_MESSAGE)
+                JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.noValidDeps'), i18n('ui.importCsv'), JOptionPane.WARNING_MESSAGE)
                 return
             }
             // pom.xml をパース（編集用に XmlParser、名前空間なしで扱う）
@@ -707,12 +783,12 @@ class AntToMavenTool {
             // XmlUtil.serialize でできる余計な空白行を除去（連続改行を1つに）
             def serialized = XmlUtil.serialize(pom).replaceAll(/\n\s*\n/, '\n')
             pomFile.text = serialized
-            log("依存関係を pom.xml に全件インポートしました: ${pomFile.absolutePath} (既存削除後 ${csvDeps.size()}件)")
-            JOptionPane.showMessageDialog(mainFrame, "既存の依存関係を削除し、${csvDeps.size()}件をインポートしました。\n${pomFile.absolutePath}", "依存関係CSVインポート", JOptionPane.INFORMATION_MESSAGE)
+            log(i18n('log.imported', pomFile.absolutePath, csvDeps.size().toString()))
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.done', csvDeps.size().toString(), pomFile.absolutePath), i18n('ui.importCsv'), JOptionPane.INFORMATION_MESSAGE)
         } catch (Exception e) {
-            println "インポートに失敗しました: ${e.message}"
+            println i18n('msg.import.failed', e.message)
             e.printStackTrace()
-            JOptionPane.showMessageDialog(mainFrame, "インポートに失敗しました: ${e.message}", "エラー", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.failed', e.message), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
         }
     }
 
@@ -721,7 +797,7 @@ class AntToMavenTool {
     private void buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys = []) {
         builder.dependencies {
             if (excludedKeys) {
-                excludedKeys.each { key -> mkp.yieldUnescaped('\n  <!-- 除外: ' + key + ' -->') }
+                excludedKeys.each { key -> mkp.yieldUnescaped('\n  <!-- ' + i18n('comment.excluded', key) + ' -->') }
             }
             finalDependencies.sort { it.groupId }.each { dep ->
                 if (dep.dependencyComment) {
@@ -772,7 +848,7 @@ class AntToMavenTool {
                 return [g: doc.g, a: doc.a, v: doc.v]
             }
         } catch (Exception e) {
-            log("APIエラー (SHA1: ${sha1}): ${e.message}")
+            log(i18n('log.apiError', sha1, e.message))
         }
         return null
     }
