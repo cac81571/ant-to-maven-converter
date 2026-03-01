@@ -1,6 +1,6 @@
 # AntToMavenTool メソッド一覧
 
-`AntToMavenConverter.groovy`（クラス `AntToMavenTool`）のメソッド名と処理概要をまとめたドキュメントです。
+`src/main/groovy/AntToMavenConverter.groovy` に定義されているクラス `AntToMavenTool` のメソッド名と処理概要をまとめたドキュメントです。
 
 ---
 
@@ -9,7 +9,7 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `main(String[] args)` | アプリケーションのエントリポイント。`AntToMavenTool` をインスタンス化して `run()` を呼び出す。 |
-| `run()` | 起動処理。設定の読み込み（`setupConfig`）と UI 構築（`setupUI`）を実行する。 |
+| `run()` | 起動処理。保存済み言語で `loadI18n`、設定の読み込み（`setupConfig`）、UI 構築（`setupUI`）を実行する。 |
 
 ---
 
@@ -18,7 +18,18 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `setupConfig()` | 設定ファイルを読み込む。`~/.ant-to-maven-converter/ant-to-maven-default.groovy` が無ければ JAR 同梱のリソースをコピーして作成し、ConfigSlurper でパースして `config` に格納する。 |
-| `setupUI()` | Swing でメインウィンドウを構築する。プロジェクトパス・設定ファイルパスのコンボ、最新版チェック、POM生成／中止ボタン、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
+| `setupUI()` | Swing でメインウィンドウを構築する。言語コンボ、プロジェクトパス・設定ファイルパスのコンボ、最新版チェック、POM生成／中止／pom 依存最新化ボタン、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
+
+---
+
+## i18n・UI 文言
+
+| メソッド | 処理概要 |
+|----------|----------|
+| `loadI18n(String lang)` | 指定ロケール（`ja` / `en`）のメッセージプロパティ（`messages_ja.properties` / `messages_en.properties`）を UTF-8 で読み込み、`i18nMessages` に格納する。 |
+| `refreshUIStrings()` | 言語切り替え時に、メインウィンドウ・ラベル・ボタン・チェックボックスなどの表示文言を `i18n` で再適用する。 |
+| `i18n(String key)` | メッセージキーに対応する文言を返す。 |
+| `i18n(String key, Object... args)` | メッセージキーに対応するテンプレートに `MessageFormat.format` で引数を埋め込んで返す。 |
 
 ---
 
@@ -28,8 +39,8 @@
 |----------|----------|
 | `startProcess()` | 「POM生成」ボタン押下時の処理。パス検証、既存 pom.xml の上書き確認（上書きする／別名で保存／処理中止）、設定の再読み込み、履歴保存のあと、バックグラウンドで `processDirectory` を実行する。 |
 | `stopProcess()` | 「中止」ボタン押下時。`isRunning` を false にし、処理の停止を要求する（現在の処理の完了を待つ）。 |
-| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集し、各 JAR の SHA-1 を計算して Maven Central API で検索。見つかったものは `Dependency` として、見つからないものは system スコープで `scannedDeps` に追加。最後に `generatePom` を呼び出す。 |
-| `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立て、オプションでバージョンアップを適用。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
+| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名から `stripVersionFromJarBaseName` で artifactId 候補を出し、`searchMavenCentralByArtifactId` でフォールバック検索。それでも見つからなければ `addSystemScopeDependency` で system スコープの依存を追加。最後に `generatePom` を呼び出す。 |
+| `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立て、オプションで `getLatestVersion` によるバージョンアップを適用（`isNewerVersion` でダウングレード防止）。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
 
 ---
 
@@ -37,7 +48,7 @@
 
 | メソッド | 処理概要 |
 |----------|----------|
-| `updatePomDependenciesToLatest()` | 「pom.xml 依存関係最新化」ボタン押下時。設定を再読み込みし、DOM で pom.xml をパース。各 `<dependency>` について `excludeFromVersionUpgrade` に含まれる場合はスキップ、そうでなければ `getLatestVersion` で最新版を取得して `<version>` のみ更新。コメントは DOM で保持。 |
+| `updatePomDependenciesToLatest()` | 「pom.xml 依存関係最新化」ボタン押下時。設定を再読み込みし、`DocumentBuilder`（コメント保持）で pom.xml をパース。各 `<dependency>` について `isExcludedFromVersionUpgrade` で対象外ならスキップ、そうでなければ `getLatestVersion` で最新版を取得し、`isNewerVersion` で現行より新しい場合のみ `<version>` を更新。最後に `serializeDomDocument` で XML を書き出して保存。 |
 
 ---
 
@@ -61,6 +72,29 @@
 | `parseDependenciesFromPom(File pomFile)` | pom.xml を XmlSlurper でパースし、`<dependency>` の groupId / artifactId / version / scope を取得して `List<Dependency>` で返す。 |
 | `exportDependenciesToCsv()` | 選択プロジェクトの pom.xml から依存関係をパースし、ファイル保存ダイアログで指定した CSV に `groupId,artifactId,version,scope` 形式でエクスポートする。 |
 | `importDependenciesFromCsv()` | CSV を選択して読み込み、既存 pom.xml の `<dependencies>` 内の全 dependency を削除したうえで、CSV の全行を新規 dependency として追加し、pom.xml を上書き保存する。 |
+
+---
+
+## JAR フォールバック・検索
+
+| メソッド | 処理概要 |
+|----------|----------|
+| `stripVersionFromJarBaseName(String baseName)` | JAR のベース名（拡張子除く）から末尾のバージョン部分を除去する。例: `primefaces-15.0.5` → `primefaces`。正規表現で `-数字(.数字)*(-qualifier)?` 形式を削除。 |
+| `searchMavenCentralByArtifactId(String artifactId)` | Maven Central Search API を `a:"artifactId"` で検索し、最初にヒットした `[g, a]` を返す。SHA-1 で見つからない場合のフォールバック用。バージョンは `getLatestVersion` で取得する。 |
+| `searchMavenCentralByQuery(String query)` | 一般クエリ `q=` で Maven Central を検索し、最初にヒットした `[g, a]` を返す。artifactId 検索で見つからない場合のフォールバック用。 |
+| `addSystemScopeDependency(File projectDir, File jar, List<Dependency> scannedDeps)` | SHA-1 および名前検索でも見つからなかった JAR を、`groupId: local.dependency`、`system` スコープ、`systemPath` に `\${project.basedir}/相対パス` を設定して `scannedDeps` に追加する。 |
+
+---
+
+## DOM・バージョン比較（pom 更新用）
+
+| メソッド | 処理概要 |
+|----------|----------|
+| `isExcludedFromVersionUpgrade(String key, Collection excludeFromVersionUpgrade)` | 設定の `excludeFromVersionUpgrade` に `groupId:artifactId` が含まれるか判定。文字列または Map（`key` または `groupId`/`artifactId`）に対応。対象外なら true。 |
+| `getFirstChildElement(Element parent, String tagName)` | DOM の `Element` から、指定タグ名の直下の最初の子要素を返す。無ければ null。 |
+| `getFirstChildElementText(Element parent, String tagName)` | 上記で取得した子要素のテキスト内容を返す。 |
+| `serializeDomDocument(Document doc)` | DOM Document を XML 文字列にシリアライズする。コメント・構造を保持。連続空行は 1 行にまとめる。 |
+| `isNewerVersion(String newVersion, String currentVersion)` | `ComparableVersion` で比較し、`newVersion` が `currentVersion` より新しい場合のみ true。バージョンダウン防止に使用。 |
 
 ---
 
@@ -94,10 +128,12 @@
 ```mermaid
 flowchart LR
     A[main] --> B[run]
-    B --> C[setupConfig]
-    B --> D[setupUI]
-    C --> C1[設定ファイル読み込み]
-    D --> D1[メインウィンドウ構築]
+    B --> C[loadI18n]
+    B --> D[setupConfig]
+    B --> E[setupUI]
+    C --> C1[メッセージプロパティ読み込み]
+    D --> D1[設定ファイル読み込み]
+    E --> E1[メインウィンドウ構築]
 ```
 
 ### POM 生成フロー
@@ -113,12 +149,20 @@ flowchart TB
     W -->|Yes| O[上書き/別名/中止]
     W -->|No| P[processDirectory]
     O -->|上書き or 別名| P
-    P --> P1[JAR 再帰収集]
+    P --> P1[JAR 再帰収集・excludeJarPaths 除外]
     P1 --> P2[SHA-1 計算]
     P2 --> P3[Maven Central 検索]
-    P3 --> P4[generatePom]
+    P3 --> P3b{ヒット?}
+    P3b -->|No| P3c[stripVersionFromJarBaseName]
+    P3c --> P3d[searchMavenCentralByArtifactId]
+    P3d --> P3e{ヒット?}
+    P3e -->|Yes| P3f[getLatestVersion で Dependency 追加]
+    P3e -->|No| P3g[addSystemScopeDependency]
+    P3b -->|Yes| P4[generatePom]
+    P3f --> P4
+    P3g --> P4
     P4 --> G1[除外・置換・追加適用]
-    G1 --> G2[バージョンアップ適用]
+    G1 --> G2[バージョンアップ・isNewerVersion]
     G2 --> G3[POM 出力]
 ```
 
@@ -134,10 +178,10 @@ flowchart TB
     U5 --> U6[excludeFromVersionUpgrade 取得]
     U6 --> U7[DOM で pom パース]
     U7 --> U8[各 dependency を走査]
-    U8 --> U9{exclude に含まれる?}
+    U8 --> U9{isExcludedFromVersionUpgrade?}
     U9 -->|Yes| U10[スキップ・ログ]
     U9 -->|No| U11[getLatestVersion]
-    U11 --> U12{最新版あり & 変更?}
+    U11 --> U12{isNewerVersion?}
     U12 -->|Yes| U13[version 要素を更新]
     U12 -->|No| U10
     U13 --> U10
@@ -177,6 +221,7 @@ flowchart TB
         R[run]
     end
     subgraph 初期化
+        LI[loadI18n]
         SC[setupConfig]
         SU[setupUI]
     end
@@ -195,14 +240,23 @@ flowchart TB
         GPP[getProjectPomFile]
         PR[parseDependenciesFromPom]
     end
-    subgraph 補助
+    subgraph 補助・API
         BDS[buildDependenciesSection]
         SHA[calculateSha1]
         MC[searchMavenCentral]
+        MC2[searchMavenCentralByArtifactId]
         GLV[getLatestVersion]
+        STRIP[stripVersionFromJarBaseName]
+        ADD_SYS[addSystemScopeDependency]
         LOG[log]
     end
+    subgraph DOM・バージョン
+        IS_EX[isExcludedFromVersionUpgrade]
+        SER[serializeDomDocument]
+        IS_NEW[isNewerVersion]
+    end
     M --> R
+    R --> LI
     R --> SC
     R --> SU
     SP --> PD
@@ -214,15 +268,21 @@ flowchart TB
     GP --> BDS
     PD --> SHA
     PD --> MC
+    PD --> STRIP
+    PD --> MC2
+    PD --> ADD_SYS
     UP --> GLV
+    UP --> IS_EX
+    UP --> SER
+    UP --> IS_NEW
 ```
 
 ---
 
 ## 処理の流れ（概要・テキスト）
 
-1. **起動** … `main` → `run` → `setupConfig` → `setupUI`
-2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR スキャン・Maven 検索）→ `generatePom`（除外・置換・追加 → バージョンアップ → POM 出力）
-3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で exclude 判定／`getLatestVersion` → 更新分のみシリアライズ・保存
+1. **起動** … `main` → `run` → `loadI18n` / `setupConfig` / `setupUI`
+2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR 収集・excludeJarPaths 除外 → SHA-1 → `searchMavenCentral`、未ヒット時は `stripVersionFromJarBaseName` + `searchMavenCentralByArtifactId` または `addSystemScopeDependency`）→ `generatePom`（除外・置換・追加 → `getLatestVersion` / `isNewerVersion` → POM 出力）
+3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で `isExcludedFromVersionUpgrade`／`getLatestVersion`／`isNewerVersion` → `serializeDomDocument` で保存
 4. **CSV エクスポート** … `exportDependenciesToCsv` → `getProjectPomFile` → `parseDependenciesFromPom` → ファイル保存
 5. **CSV インポート** … `importDependenciesFromCsv` → `getProjectPomFile` → CSV 読み込み → XmlParser で pom 編集 → 保存

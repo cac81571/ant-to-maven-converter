@@ -80,10 +80,12 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `excludeJarPaths` | Glob patterns for JAR paths to exclude from scanning (e.g. `**/test/**`) |
 | `excludeFromVersionUpgrade` | Dependencies to skip when upgrading to latest (string `groupId:artifactId` or map with `key` and optional `version`). Used by “Replace with latest” and “Update pom.xml dependencies”. |
 | `addDependencies` | Dependencies to add at the top of the result |
-| `replaceDependencies` | Replace detected `groupId:artifactId` with other dependency(ies) (1:1 or 1:N) |
+| `replaceDependencies` | Replace detected `groupId:artifactId` with other dependency(ies) (1:1 or 1:N). Use a list of maps with `from` and `to` (e.g. `[ from: 'g:a', to: [...] ]`) because ConfigSlurper does not reliably support colons in map keys. |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
 
 See the sample in the repo: `src/main/resources/ant-to-maven-default.groovy`.
+
+For method-level documentation, see [METHODS.md](docs/METHODS.md).
 
 ## Project layout
 
@@ -93,15 +95,15 @@ ant-to-maven-converter/
 ├── README.md
 ├── README_ja.md
 ├── docs/
-│   └── METHODS.md
+│   └── METHODS.md          # Method-level documentation (AntToMavenTool)
 └── src/
     └── main/
         ├── groovy/
-        │   └── AntToMavenConverter.groovy   # Main class AntToMavenTool
+        │   └── AntToMavenConverter.groovy   # Main class: AntToMavenTool
         └── resources/
             ├── ant-to-maven-default.groovy # Config sample
-            ├── messages_ja.properties       # Japanese messages
-            └── messages_en.properties      # English messages
+            ├── messages_ja.properties      # Japanese UI messages
+            └── messages_en.properties      # English UI messages
 ```
 
 ## License
