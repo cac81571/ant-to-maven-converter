@@ -504,6 +504,7 @@ class AntToMavenTool {
         def excludes = config.excludeDependencies instanceof Collection ? config.excludeDependencies : []
         def additions = config.addDependencies instanceof Collection ? config.addDependencies : []
         def replacements = config.replaceDependencies instanceof Map ? config.replaceDependencies : [:]
+        def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
 
         println "excludes: ${excludes}"
 
@@ -594,6 +595,29 @@ class AntToMavenTool {
             finalDependencies.each { dep ->
                 if (!isRunning.get()) return
                 if (dep.scope == 'system' || dep.systemPath) return
+                String key = "${dep.groupId}:${dep.artifactId}"
+                def excludeEntry = excludeFromVersionUpgrade.find { entry ->
+                    if (entry instanceof String) return entry == key
+                    if (entry instanceof Map) {
+                        String entryKey = entry.key ?: (entry.groupId && entry.artifactId ? "${entry.groupId}:${entry.artifactId}" : null)
+                        return entryKey == key
+                    }
+                    return false
+                }
+                if (excludeEntry != null) {
+                    String fixedVersion = null
+                    if (excludeEntry instanceof Map && (excludeEntry.version || excludeEntry.get('version'))) {
+                        fixedVersion = excludeEntry.version ?: excludeEntry.get('version')?.toString()
+                    }
+                    if (fixedVersion != null && fixedVersion != dep.version) {
+                        log(i18n('log.versionPinned', dep.groupId, dep.artifactId, dep.version, fixedVersion))
+                        dep.versionComment = i18n('comment.versionPinned', dep.version, fixedVersion)
+                        dep.version = fixedVersion
+                    } else {
+                        log(i18n('log.versionUpgradeSkipped', key))
+                    }
+                    return
+                }
                 String latest = getLatestVersion(dep.groupId, dep.artifactId)
                 if (latest && latest != dep.version) {
                     log(i18n('log.versionUpgraded', dep.groupId, dep.artifactId, dep.version, latest))

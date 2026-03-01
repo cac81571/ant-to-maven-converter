@@ -58,3 +58,11 @@ pomProjectTemplate = '''
 //         [groupId: 'org.new', artifactId: 'new-b', version: '1.0', scope: 'compile']
 //     ]]
 // ]
+
+// 依存関係の最新化を除外（「依存バージョンを最新に置き換える」がオンのとき、ここに指定した依存は最新検索しない）
+// 文字列のみ: 最新化をスキップし、検出時のバージョンのままにする
+// Map で version を指定: 最新化をスキップし、指定したバージョンに置換する
+// excludeFromVersionUpgrade = [
+//     'org.example:legacy-lib',                    // スキップのみ（バージョンはそのまま）
+//     [key: 'org.example:another-lib', version: '2.1.0']  // 2.1.0 に固定
+// ]
