@@ -481,14 +481,11 @@ class AntToMavenTool {
                         originalFile: jar
                     )
                 } else {
-                    // SHA1 でヒットしなかった場合: まず artifactId 検索、見つからなければ q= で検索し、ヒットした場合は最新バージョンを使用（いずれも拡張子・バージョン除いた文字列）
+                    // SHA1 でヒットしなかった場合: a:artifactId 検索は行わず、q=JARファイル名（拡張子・バージョン番号なし）で一般検索のみ行う
                     String baseName = jar.name.toLowerCase().endsWith('.jar') ? jar.name[0..-5] : jar.name
                     String nameForSearch = stripVersionFromJarBaseName(baseName)
-                    def fallback = nameForSearch ? searchMavenCentralByArtifactId(nameForSearch) : null
-                    if (!fallback && nameForSearch) {
-                        Thread.sleep(200)  // レートリミット対策
-                        fallback = searchMavenCentralByQuery(nameForSearch)
-                    }
+                    if (nameForSearch) Thread.sleep(200)  // レートリミット対策
+                    def fallback = nameForSearch ? searchMavenCentralByQuery(nameForSearch) : null
                     if (fallback) {
                         Thread.sleep(200)  // レートリミット対策
                         String latestVer = getLatestVersion(fallback.g, fallback.a)
