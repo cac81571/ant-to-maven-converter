@@ -39,6 +39,7 @@ import javax.xml.transform.stream.StreamResult
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.NodeList
+import org.apache.maven.artifact.versioning.ComparableVersion
 
 class AntToMavenTool {
 
@@ -632,7 +633,7 @@ class AntToMavenTool {
                     return
                 }
                 String latest = getLatestVersion(dep.groupId, dep.artifactId)
-                if (latest && latest != dep.version) {
+                if (latest && isNewerVersion(latest, dep.version)) {
                     log(i18n('log.versionUpgraded', dep.groupId, dep.artifactId, dep.version, latest))
                     dep.versionComment = i18n('comment.versionUpgrade', dep.version, latest)
                     dep.version = latest
@@ -894,13 +895,14 @@ class AntToMavenTool {
                         continue
                     }
                     String latest = getLatestVersion(g, a)
-                    if (latest && latest != currentVer) {
+                    if (latest && isNewerVersion(latest, currentVer)) {
                         versionEl.setTextContent(latest)
                         updated++
                         log(i18n('log.updatePom.updated', g, a, currentVer, latest))
                     } else if (!latest) {
                         log(i18n('log.updatePom.skipped', g, a))
                     }
+                    // latest が currentVer 以下なら更新しない（バージョンダウン防止）
                 }
                 if (updated > 0) {
                     String xml = serializeDomDocument(doc)
@@ -1044,6 +1046,16 @@ class AntToMavenTool {
              // ignore
         }
         return null
+    }
+
+    /** API で取得したバージョンが現在より新しい場合のみ true（バージョンダウンを防ぐ） */
+    private static boolean isNewerVersion(String newVersion, String currentVersion) {
+        if (!newVersion?.trim() || !currentVersion?.trim()) return false
+        try {
+            return new ComparableVersion(newVersion.trim()).compareTo(new ComparableVersion(currentVersion.trim())) > 0
+        } catch (Exception e) {
+            return false
+        }
     }
 
     private String getRelativePath(File base, File file) {
