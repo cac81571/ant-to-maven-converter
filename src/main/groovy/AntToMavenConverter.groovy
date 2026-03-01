@@ -481,19 +481,33 @@ class AntToMavenTool {
                         originalFile: jar
                     )
                 } else {
-                    String relativePath = getRelativePath(projectDir, jar)
-                    log(i18n('log.notFound', jar.name, relativePath))
-                    // プロジェクトルートからの相対パスを計算
-                    
-                    scannedDeps << new Dependency(
-                        groupId: 'local.dependency',
-                        artifactId: jar.name.replace('.jar', ''),
-                        version: '1.0.0',
-                        scope: 'system',
-                        systemPath: "\${project.basedir}/${relativePath}",
-                        originalFile: jar,
-                        dependencyComment: i18n('comment.systemScope')
-                    )
+                    // SHA1 でヒットしなかった場合: まず artifactId 検索、見つからなければ q= で検索し、ヒットした場合は最新バージョンを使用（いずれも拡張子・バージョン除いた文字列）
+                    String baseName = jar.name.toLowerCase().endsWith('.jar') ? jar.name[0..-5] : jar.name
+                    String nameForSearch = stripVersionFromJarBaseName(baseName)
+                    def fallback = nameForSearch ? searchMavenCentralByArtifactId(nameForSearch) : null
+                    if (!fallback && nameForSearch) {
+                        Thread.sleep(200)  // レートリミット対策
+                        fallback = searchMavenCentralByQuery(nameForSearch)
+                    }
+                    if (fallback) {
+                        Thread.sleep(200)  // レートリミット対策
+                        String latestVer = getLatestVersion(fallback.g, fallback.a)
+                        if (latestVer) {
+                            String relativePath = getRelativePath(projectDir, jar)
+                            log(i18n('log.foundByArtifactId', jar.name, relativePath, fallback.g, fallback.a, latestVer))
+                            scannedDeps << new Dependency(
+                                groupId: fallback.g,
+                                artifactId: fallback.a,
+                                version: latestVer,
+                                scope: 'compile',
+                                originalFile: jar
+                            )
+                        } else {
+                            addSystemScopeDependency(projectDir, jar, scannedDeps)
+                        }
+                    } else {
+                        addSystemScopeDependency(projectDir, jar, scannedDeps)
+                    }
                 }
             } catch (Exception e) {
                 log(i18n('log.errorProcessing', jar.name, e.message))
@@ -1029,6 +1043,72 @@ class AntToMavenTool {
             log(i18n('log.apiError', sha1, e.message))
         }
         return null
+    }
+
+    /**
+     * JAR のベース名（拡張子除いた名前）から末尾のバージョン部分を除去する。
+     * 例: primefaces-15.0.5 -> primefaces, commons-lang3-3.12.0 -> commons-lang3
+     * バージョンは「-数字」で始まり、その後に .数字 や -qualifier が続く形式をマッチする。
+     */
+    private static String stripVersionFromJarBaseName(String baseName) {
+        if (!baseName?.trim()) return baseName ?: ''
+        // -数字(.数字)*(- qualifier)? の形式。例: -15.0.5, -3.12.0, -1.0.0-SNAPSHOT
+        String withoutVer = baseName.replaceFirst(/-\d+(\.\d+)*(-[a-zA-Z0-9.]+)?$/, '')
+        (withoutVer != null && withoutVer != baseName) ? withoutVer.trim() : baseName
+    }
+
+    /**
+     * artifactId で Maven Central を検索し、最初にヒットした groupId / artifactId を返す。
+     * バージョンは getLatestVersion で取得すること。
+     */
+    private def searchMavenCentralByArtifactId(String artifactId) {
+        try {
+            String q = "a:\"${artifactId}\""
+            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=1&wt=json"
+            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
+            def json = jsonSlurper.parseText(jsonText)
+            if (json.response.numFound > 0) {
+                def doc = json.response.docs[0]
+                return [g: doc.g, a: doc.a]
+            }
+        } catch (Exception e) {
+            // フォールバック用のためログは出さず無視
+        }
+        return null
+    }
+
+    /**
+     * 一般クエリ q= で Maven Central を検索し、最初にヒットした groupId / artifactId を返す。
+     * artifactId 検索で見つからない場合のフォールバック用。バージョンは getLatestVersion で取得すること。
+     */
+    private def searchMavenCentralByQuery(String query) {
+        try {
+            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(query, "UTF-8")}&rows=1&wt=json"
+            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
+            def json = jsonSlurper.parseText(jsonText)
+            if (json.response.numFound > 0) {
+                def doc = json.response.docs[0]
+                return [g: doc.g, a: doc.a]
+            }
+        } catch (Exception e) {
+            // フォールバック用のためログは出さず無視
+        }
+        return null
+    }
+
+    /** SHA1 でも名前検索でも見つからなかった場合に system スコープで依存を追加する */
+    private void addSystemScopeDependency(File projectDir, File jar, List<Dependency> scannedDeps) {
+        String relativePath = getRelativePath(projectDir, jar)
+        log(i18n('log.notFound', jar.name, relativePath))
+        scannedDeps << new Dependency(
+            groupId: 'local.dependency',
+            artifactId: jar.name.replace('.jar', ''),
+            version: '1.0.0',
+            scope: 'system',
+            systemPath: "\${project.basedir}/${relativePath}",
+            originalFile: jar,
+            dependencyComment: i18n('comment.systemScope')
+        )
     }
 
     /**
