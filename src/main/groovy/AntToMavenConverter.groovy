@@ -29,6 +29,16 @@ import java.nio.file.Path
 import java.text.MessageFormat
 import java.util.Locale
 import java.util.Properties
+import java.io.StringWriter
+import javax.xml.parsers.DocumentBuilder
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.transform.OutputKeys
+import javax.xml.transform.TransformerFactory
+import javax.xml.transform.dom.DOMSource
+import javax.xml.transform.stream.StreamResult
+import org.w3c.dom.Document
+import org.w3c.dom.Element
+import org.w3c.dom.NodeList
 
 class AntToMavenTool {
 
@@ -58,6 +68,7 @@ class AntToMavenTool {
     private JCheckBox latestVersionCheck
     private JButton runButton
     private JButton stopButton
+    private JButton updatePomDepsButton
     private JLabel statusLabel
     private JProgressBar progressBar
 
@@ -110,6 +121,7 @@ class AntToMavenTool {
         if (latestVersionCheck != null) latestVersionCheck.text = i18n('ui.latestVersionReplace')
         if (runButton != null) runButton.text = i18n('ui.generatePom')
         if (stopButton != null) stopButton.text = i18n('ui.stop')
+        if (updatePomDepsButton != null) updatePomDepsButton.text = i18n('ui.updatePomDeps')
         if (progressBar != null) progressBar.string = i18n('ui.ready')
         if (exportCsvBtn != null) exportCsvBtn.text = i18n('ui.exportCsv')
         if (importCsvBtn != null) importCsvBtn.text = i18n('ui.importCsv')
@@ -223,6 +235,7 @@ class AntToMavenTool {
                         latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
                         runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
                         stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
+                        updatePomDepsButton = button(text: i18n('ui.updatePomDeps'), actionPerformed: { updatePomDependenciesToLatest() })
                     }
                 }
 
@@ -815,6 +828,142 @@ class AntToMavenTool {
             e.printStackTrace()
             JOptionPane.showMessageDialog(mainFrame, i18n('msg.import.failed', e.message), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
         }
+    }
+
+    /**
+     * プロジェクトの pom.xml の依存関係バージョンを Maven Central の最新に更新する。
+     * DOM パーサー（DocumentBuilderFactory）でパースし、setIgnoringComments(false) によりコメントを保持したまま
+     * 各 dependency の version のみを書き換え、Transformer でシリアライズして保存する。
+     */
+    private void updatePomDependenciesToLatest() {
+        // 対象 pom.xml の取得（コンボで選択中のプロジェクトパスから）
+        File pomFile = getProjectPomFile()
+        if (!pomFile) {
+            JOptionPane.showMessageDialog(mainFrame,
+                i18n('msg.updatePom.needPom'),
+                i18n('ui.updatePomDeps'), JOptionPane.WARNING_MESSAGE)
+            return
+        }
+        // 依存が1件も無い場合は処理しない
+        List<Dependency> deps = parseDependenciesFromPom(pomFile)
+        if (deps.isEmpty()) {
+            JOptionPane.showMessageDialog(mainFrame, i18n('msg.updatePom.noDeps'), i18n('ui.updatePomDeps'), JOptionPane.INFORMATION_MESSAGE)
+            return
+        }
+        final File pom = pomFile
+        updatePomDepsButton.enabled = false
+        logArea.text = ""
+        log(i18n('log.updatePom.start'))
+        // ネットワークアクセスがあるためバックグラウンドスレッドで実行
+        Thread.start {
+            int updated = 0
+            try {
+                // 設定を再読み込み（excludeFromVersionUpgrade を反映）
+                String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: new File(CONFIG_DIR, CONFIG_FILE).absolutePath
+                try {
+                    File configFile = new File(configPath)
+                    if (configFile.exists()) {
+                        config = new ConfigSlurper().parse(configFile.toURI().toURL())
+                        log(i18n('log.configReloaded', configPath))
+                    }
+                } catch (Exception e) {
+                    log(i18n('log.configLoadWarning', e.message))
+                }
+                def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
+
+                // DOM パーサー（コメントを保持する設定）
+                def factory = DocumentBuilderFactory.newInstance()
+                factory.setIgnoringComments(false)
+                factory.setFeature('http://apache.org/xml/features/disallow-doctype-decl', true)
+                def builder = factory.newDocumentBuilder()
+                Document doc = builder.parse(pom)
+                // 全 <dependency> 要素を取得（dependencies / dependencyManagement 内を含む）
+                NodeList depList = doc.getElementsByTagName('dependency')
+                for (int i = 0; i < depList.length; i++) {
+                    Element dep = (Element) depList.item(i)
+                    String g = getFirstChildElementText(dep, 'groupId')
+                    String a = getFirstChildElementText(dep, 'artifactId')
+                    Element versionEl = getFirstChildElement(dep, 'version')
+                    if (!g || !a || !versionEl) continue
+                    String currentVer = versionEl.getTextContent()?.trim()
+                    if (!currentVer) continue
+                    // 設定で最新化対象外の場合はスキップ
+                    String key = "${g}:${a}"
+                    if (isExcludedFromVersionUpgrade(key, excludeFromVersionUpgrade)) {
+                        log(i18n('log.versionUpgradeSkipped', key))
+                        continue
+                    }
+                    String latest = getLatestVersion(g, a)
+                    if (latest && latest != currentVer) {
+                        versionEl.setTextContent(latest)
+                        updated++
+                        log(i18n('log.updatePom.updated', g, a, currentVer, latest))
+                    } else if (!latest) {
+                        log(i18n('log.updatePom.skipped', g, a))
+                    }
+                }
+                if (updated > 0) {
+                    String xml = serializeDomDocument(doc)
+                    pom.withWriter('UTF-8') { w -> w.write(xml) }
+                }
+                log(i18n('log.updatePom.complete'))
+                final int count = updated
+                SwingUtilities.invokeLater {
+                    updatePomDepsButton.enabled = true
+                    JOptionPane.showMessageDialog(mainFrame,
+                        i18n('msg.updatePom.done', count.toString(), pom.absolutePath),
+                        i18n('ui.updatePomDeps'), JOptionPane.INFORMATION_MESSAGE)
+                }
+            } catch (Exception e) {
+                log(i18n('msg.updatePom.failed', e.message))
+                e.printStackTrace()
+                SwingUtilities.invokeLater {
+                    updatePomDepsButton.enabled = true
+                    JOptionPane.showMessageDialog(mainFrame, i18n('msg.updatePom.failed', e.message), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
+                }
+            }
+        }
+    }
+
+    /** 設定の excludeFromVersionUpgrade に groupId:artifactId が含まれるか（最新化対象外なら true） */
+    private static boolean isExcludedFromVersionUpgrade(String key, Collection excludeFromVersionUpgrade) {
+        if (!excludeFromVersionUpgrade) return false
+        return excludeFromVersionUpgrade.find { entry ->
+            if (entry instanceof String) return entry == key
+            if (entry instanceof Map) {
+                String entryKey = entry.key ?: (entry.groupId && entry.artifactId ? "${entry.groupId}:${entry.artifactId}" : null)
+                return entryKey == key
+            }
+            return false
+        } != null
+    }
+
+    /** DOM の Element から指定タグ名の直下の最初の子要素を返す。無ければ null */
+    private static Element getFirstChildElement(Element parent, String tagName) {
+        NodeList children = parent.getChildNodes()
+        for (int i = 0; i < children.getLength(); i++) {
+            def n = children.item(i)
+            if (n.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE && tagName.equals(n.getNodeName()))
+                return (Element) n
+        }
+        return null
+    }
+
+    /** DOM の Element から指定タグ名の直下の最初の子要素のテキスト内容を返す。無ければ null */
+    private static String getFirstChildElementText(Element parent, String tagName) {
+        Element el = getFirstChildElement(parent, tagName)
+        return el?.getTextContent()?.trim()
+    }
+
+    /** DOM Document を XML 文字列にシリアライズする（コメント・構造を保持）。余計な空行は1行にまとめる。 */
+    private static String serializeDomDocument(Document doc) {
+        def transformer = TransformerFactory.newInstance().newTransformer()
+        transformer.setOutputProperty(OutputKeys.ENCODING, 'UTF-8')
+        transformer.setOutputProperty(OutputKeys.INDENT, 'yes')
+        def writer = new StringWriter()
+        transformer.transform(new DOMSource(doc), new StreamResult(writer))
+        // 連続する空行（改行＋空白のみの行）を1つの改行にまとめる
+        return writer.toString().replaceAll(/\n\s*\n/, '\n')
     }
 
     // --- ヘルパーメソッド ---
