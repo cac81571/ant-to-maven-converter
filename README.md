@@ -12,7 +12,7 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **JAR discovery** … Recursively scans the chosen directory and collects `.jar` files
 - **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search API](https://search.maven.org/) for groupId / artifactId / version
 - **Config file** … Groovy ConfigSlurper format for flexible “exclude”, “add”, and “replace” rules
-- **Latest version** … Optional upgrade of detected artifacts to their latest versions
+- **Latest version** … Optional upgrade of detected artifacts to their latest versions (uses Maven Central **maven-metadata.xml** for fresher data than the REST API)
 - **Update pom.xml dependencies** … Button to update dependency versions in an existing `pom.xml` to the latest from Maven Central (preserves comments via DOM; respects `excludeFromVersionUpgrade`)
 - **Local JARs** … JARs not found on Maven Central are written to `pom.xml` with `system` scope
 - **i18n** … UI language switch: 日本語 / English (dropdown)

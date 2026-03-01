@@ -12,7 +12,7 @@
 - **JAR の自動検出** … 指定ディレクトリ以下を再帰的にスキャンし、`.jar` を収集
 - **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索
 - **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
-- **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード
+- **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード（Maven Central の **maven-metadata.xml** を参照。REST API より反映が早い）
 - **pom.xml 依存関係最新化** … 既存の `pom.xml` の依存バージョンを Maven Central の最新に更新するボタン（DOM でコメントを保持、`excludeFromVersionUpgrade` を尊重）
 - **ローカル JAR の扱い** … Maven Central で見つからない JAR は `system` スコープで `pom.xml` に出力
 - **多言語対応** … 日本語 / English の切り替え（言語プルダウン）

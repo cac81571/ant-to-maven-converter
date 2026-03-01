@@ -71,7 +71,7 @@
 | `buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys)` | MarkupBuilder に `<dependencies>` ブロックを出力する。除外された key をコメントで列挙し、各 Dependency の dependencyComment / versionComment / scope / systemPath / classifier を反映する。 |
 | `calculateSha1(File file)` | ファイルの SHA-1 ハッシュを計算して 16 進文字列で返す。 |
 | `searchMavenCentral(String sha1)` | Maven Central Search API に SHA-1 でクエリし、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。見つからなければ null。 |
-| `getLatestVersion(String groupId, String artifactId)` | Maven Central API で groupId:artifactId の最新バージョンを検索し、バージョン文字列を返す。取得できない場合は null。 |
+| `getLatestVersion(String groupId, String artifactId)` | Maven Central の **maven-metadata.xml**（例: `https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml`）を取得し、`<versioning><latest>` または `<versions>` 一覧から最新バージョンを返す。REST API は反映にタイムラグがあるため metadata.xml を採用。取得できない場合は null。 |
 | `getRelativePath(File base, File file)` | `base` から `file` への相対パスを URI で計算して返す。 |
 | `updateProgress(int current, int max, String message)` | 進捗バーの maximum / value / string を EDT 上で更新する。 |
 | `log(String message)` | ログエリアにメッセージを追記し、キャレットを末尾に移動する（EDT で実行）。 |

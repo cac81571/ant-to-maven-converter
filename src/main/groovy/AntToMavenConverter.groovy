@@ -45,6 +45,8 @@ class AntToMavenTool {
 
     // --- 定数 ---
     private static final String MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select"
+    /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
+    private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
     private static final String CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/"
     private static final String CONFIG_FILE = "ant-to-maven-default.groovy"
     private static final String PREF_NODE = "com.example.tools.ant2maven"
@@ -1029,21 +1031,32 @@ class AntToMavenTool {
         return null
     }
 
+    /**
+     * Maven Central の maven-metadata.xml から最新バージョンを取得する。
+     * REST API は最新情報の反映にタイムラグがあるため、metadata.xml を参照する。
+     * 例: https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml
+     */
     private String getLatestVersion(String groupId, String artifactId) {
         try {
-            String q = "g:\"${groupId}\" AND a:\"${artifactId}\""
-            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&core=gav&rows=1&wt=json&sort=v+desc"
-            
-            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
-            def json = jsonSlurper.parseText(jsonText)
-            
-            if (json.response.numFound > 0) {
-                 def doc = json.response.docs[0]
-                 if (doc.latestVersion) return doc.latestVersion
-                 return doc.v
+            String pathSegment = groupId.replace('.', '/')
+            String metadataUrl = "${MAVEN_REPO_BASE}/${pathSegment}/${artifactId}/maven-metadata.xml"
+            String xmlText = new URL(metadataUrl).getText([connectTimeout: 5000, readTimeout: 10000])
+            def root = new XmlSlurper().parseText(xmlText)
+            def versioning = root.versioning
+            if (!versioning) return null
+            // <latest> を優先し、無ければ <versions> 一覧から最大バージョンを取得
+            String latest = versioning.latest?.text()?.trim()
+            if (latest) return latest
+            def versionList = versioning.versions?.version?.collect { it.text()?.trim() }?.findAll { it } as List
+            if (!versionList || versionList.isEmpty()) return null
+            String maxVer = versionList.max { String a, String b ->
+                try {
+                    new ComparableVersion(a).compareTo(new ComparableVersion(b))
+                } catch (Exception e) { 0 }
             }
+            return maxVer
         } catch (Exception e) {
-             // ignore
+            // ignore (404 やネットワークエラーなど)
         }
         return null
     }
