@@ -13,9 +13,11 @@
 - **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索
 - **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
 - **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード
+- **pom.xml 依存関係最新化** … 既存の `pom.xml` の依存バージョンを Maven Central の最新に更新するボタン（DOM でコメントを保持、`excludeFromVersionUpgrade` を尊重）
 - **ローカル JAR の扱い** … Maven Central で見つからない JAR は `system` スコープで `pom.xml` に出力
 - **多言語対応** … 日本語 / English の切り替え（言語プルダウン）
 - **JAR パス除外** … 設定で glob パターン（例: `**/test/**`）を指定し、スキャン対象から除外可能
+- **CSV エクスポート／インポート** … `pom.xml` の依存関係を CSV にエクスポート、または CSV から `pom.xml` にインポート
 
 ## 必要環境
 
@@ -53,6 +55,14 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 
 生成された `pom.xml` はプロジェクトルート（指定したパス直下）に出力されます。
 
+### 既存の pom.xml の依存関係を最新化する
+
+プロジェクトにすでに `pom.xml` がある場合、ファイル全体を再生成せずに依存バージョンだけを Maven Central の最新に更新できます。
+
+1. **プロジェクトフォルダ** に、`pom.xml` を含むプロジェクトのルートを指定します。
+2. **「pom.xml 依存関係最新化」** ボタン（中止ボタンの右隣）をクリックします。
+3. 現在の依存関係を読み取り、Maven Central から最新版を取得して `<version>` のみを更新します。XML のコメントや改行は DOM により保持されます。設定の `excludeFromVersionUpgrade` に含まれる依存は更新されません。
+
 ## 設定ファイル
 
 設定は **Groovy ConfigSlurper** 形式で記述します。
@@ -68,6 +78,7 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 |------|------|
 | `excludeDependencies` | pom に出力しない `groupId:artifactId` のリスト |
 | `excludeJarPaths` | スキャン対象から除外する JAR のパス（glob 形式。例: `**/test/**`） |
+| `excludeFromVersionUpgrade` | 最新化対象外とする依存（文字列 `groupId:artifactId` または `key` と任意で `version` の Map）。「最新に置き換え」および「pom.xml 依存関係最新化」で参照されます。 |
 | `addDependencies` | 検出結果の先頭に追加する依存関係のリスト |
 | `replaceDependencies` | 検出した `groupId:artifactId` を別の依存関係（1:1 または 1:N）に置き換え |
 | `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |

@@ -13,9 +13,11 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search API](https://search.maven.org/) for groupId / artifactId / version
 - **Config file** … Groovy ConfigSlurper format for flexible “exclude”, “add”, and “replace” rules
 - **Latest version** … Optional upgrade of detected artifacts to their latest versions
+- **Update pom.xml dependencies** … Button to update dependency versions in an existing `pom.xml` to the latest from Maven Central (preserves comments via DOM; respects `excludeFromVersionUpgrade`)
 - **Local JARs** … JARs not found on Maven Central are written to `pom.xml` with `system` scope
 - **i18n** … UI language switch: 日本語 / English (dropdown)
 - **JAR path exclusion** … Glob patterns in config (e.g. `**/test/**`) to exclude paths from scanning
+- **CSV export/import** … Export dependencies from `pom.xml` to CSV, or import from CSV into `pom.xml`
 
 ## Requirements
 
@@ -53,6 +55,14 @@ Run the `main` method of the `AntToMavenTool` class.
 
 The generated `pom.xml` is written under the project root (the path you specified).
 
+### Updating an existing pom.xml
+
+If the project already has a `pom.xml`, you can update its dependency versions to the latest from Maven Central without regenerating the whole file:
+
+1. Set **Project folder** to the project that contains `pom.xml`.
+2. Click **“Update pom.xml dependencies”** (to the right of the Stop button).
+3. The tool reads the current dependencies, fetches the latest versions from Maven Central, and updates only the `<version>` elements. XML comments and formatting are preserved (DOM-based). Dependencies listed in `excludeFromVersionUpgrade` in the config file are not updated.
+
 ## Config file
 
 Configuration is in **Groovy ConfigSlurper** format.
@@ -68,6 +78,7 @@ Configuration is in **Groovy ConfigSlurper** format.
 |--------|-------------|
 | `excludeDependencies` | List of `groupId:artifactId` to omit from the generated pom |
 | `excludeJarPaths` | Glob patterns for JAR paths to exclude from scanning (e.g. `**/test/**`) |
+| `excludeFromVersionUpgrade` | Dependencies to skip when upgrading to latest (string `groupId:artifactId` or map with `key` and optional `version`). Used by “Replace with latest” and “Update pom.xml dependencies”. |
 | `addDependencies` | Dependencies to add at the top of the result |
 | `replaceDependencies` | Replace detected `groupId:artifactId` with other dependency(ies) (1:1 or 1:N) |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |

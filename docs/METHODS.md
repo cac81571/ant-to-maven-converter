@@ -33,6 +33,14 @@
 
 ---
 
+## pom.xml 依存関係最新化
+
+| メソッド | 処理概要 |
+|----------|----------|
+| `updatePomDependenciesToLatest()` | 「pom.xml 依存関係最新化」ボタン押下時。設定を再読み込みし、DOM で pom.xml をパース。各 `<dependency>` について `excludeFromVersionUpgrade` に含まれる場合はスキップ、そうでなければ `getLatestVersion` で最新版を取得して `<version>` のみ更新。コメントは DOM で保持。 |
+
+---
+
 ## UI 補助（フォルダ・履歴）
 
 | メソッド | 処理概要 |
@@ -79,9 +87,142 @@
 
 ---
 
-## 処理の流れ（概要）
+## 処理の流れ（Mermaid 図）
+
+### 起動フロー
+
+```mermaid
+flowchart LR
+    A[main] --> B[run]
+    B --> C[setupConfig]
+    B --> D[setupUI]
+    C --> C1[設定ファイル読み込み]
+    D --> D1[メインウィンドウ構築]
+```
+
+### POM 生成フロー
+
+```mermaid
+flowchart TB
+    subgraph ボタン操作
+        S[startProcess]
+    end
+    S --> V{パス検証}
+    V -->|NG| E[エラーダイアログ]
+    V -->|OK| W{pom.xml 既存?}
+    W -->|Yes| O[上書き/別名/中止]
+    W -->|No| P[processDirectory]
+    O -->|上書き or 別名| P
+    P --> P1[JAR 再帰収集]
+    P1 --> P2[SHA-1 計算]
+    P2 --> P3[Maven Central 検索]
+    P3 --> P4[generatePom]
+    P4 --> G1[除外・置換・追加適用]
+    G1 --> G2[バージョンアップ適用]
+    G2 --> G3[POM 出力]
+```
+
+### pom.xml 依存関係最新化フロー
+
+```mermaid
+flowchart TB
+    U[updatePomDependenciesToLatest] --> U1[getProjectPomFile]
+    U1 --> U2{pom.xml あり?}
+    U2 -->|No| U3[警告ダイアログ]
+    U2 -->|Yes| U4[parseDependenciesFromPom]
+    U4 --> U5[設定再読み込み]
+    U5 --> U6[excludeFromVersionUpgrade 取得]
+    U6 --> U7[DOM で pom パース]
+    U7 --> U8[各 dependency を走査]
+    U8 --> U9{exclude に含まれる?}
+    U9 -->|Yes| U10[スキップ・ログ]
+    U9 -->|No| U11[getLatestVersion]
+    U11 --> U12{最新版あり & 変更?}
+    U12 -->|Yes| U13[version 要素を更新]
+    U12 -->|No| U10
+    U13 --> U10
+    U10 --> U8
+    U8 --> U14[serializeDomDocument]
+    U14 --> U15[ファイル保存]
+```
+
+### CSV エクスポート
+
+```mermaid
+flowchart LR
+    E1[exportDependenciesToCsv] --> E2[getProjectPomFile]
+    E2 --> E3[parseDependenciesFromPom]
+    E3 --> E4[保存ダイアログ]
+    E4 --> E5[CSV 書き出し]
+```
+
+### CSV インポート
+
+```mermaid
+flowchart LR
+    I1[importDependenciesFromCsv] --> I2[getProjectPomFile]
+    I2 --> I3[CSV 選択・読み込み]
+    I3 --> I4[XmlParser で pom 編集]
+    I4 --> I5[既存 dependency 削除]
+    I5 --> I6[CSV の全行を追加]
+    I6 --> I7[保存]
+```
+
+### メソッド分類（ブロック図）
+
+```mermaid
+flowchart TB
+    subgraph エントリ
+        M[main]
+        R[run]
+    end
+    subgraph 初期化
+        SC[setupConfig]
+        SU[setupUI]
+    end
+    subgraph POM生成
+        SP[startProcess]
+        PD[processDirectory]
+        GP[generatePom]
+        ST[stopProcess]
+    end
+    subgraph pom最新化
+        UP[updatePomDependenciesToLatest]
+    end
+    subgraph CSV
+        EX[exportDependenciesToCsv]
+        IM[importDependenciesFromCsv]
+        GPP[getProjectPomFile]
+        PR[parseDependenciesFromPom]
+    end
+    subgraph 補助
+        BDS[buildDependenciesSection]
+        SHA[calculateSha1]
+        MC[searchMavenCentral]
+        GLV[getLatestVersion]
+        LOG[log]
+    end
+    M --> R
+    R --> SC
+    R --> SU
+    SP --> PD
+    PD --> GP
+    EX --> GPP
+    EX --> PR
+    IM --> GPP
+    UP --> GPP
+    GP --> BDS
+    PD --> SHA
+    PD --> MC
+    UP --> GLV
+```
+
+---
+
+## 処理の流れ（概要・テキスト）
 
 1. **起動** … `main` → `run` → `setupConfig` → `setupUI`
 2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR スキャン・Maven 検索）→ `generatePom`（除外・置換・追加 → バージョンアップ → POM 出力）
-3. **CSV エクスポート** … `exportDependenciesToCsv` → `getProjectPomFile` → `parseDependenciesFromPom` → ファイル保存
-4. **CSV インポート** … `importDependenciesFromCsv` → `getProjectPomFile` → CSV 読み込み → XmlParser で pom 編集 → 保存
+3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で exclude 判定／`getLatestVersion` → 更新分のみシリアライズ・保存
+4. **CSV エクスポート** … `exportDependenciesToCsv` → `getProjectPomFile` → `parseDependenciesFromPom` → ファイル保存
+5. **CSV インポート** … `importDependenciesFromCsv` → `getProjectPomFile` → CSV 読み込み → XmlParser で pom 編集 → 保存
