@@ -454,7 +454,8 @@ class AntToMavenTool {
                         log(i18n('log.warnDateVersion', artifact.g, artifact.a, artifact.v))
                     }
                     
-                    log(i18n('log.found', jar.name, artifact.g, artifact.a, artifact.v))
+                    String relativePath = getRelativePath(projectDir, jar)
+                    log(i18n('log.found', jar.name, relativePath, artifact.g, artifact.a, artifact.v))
                     
                     scannedDeps << new Dependency(
                         groupId: artifact.g,
@@ -464,9 +465,9 @@ class AntToMavenTool {
                         originalFile: jar
                     )
                 } else {
-                    log(i18n('log.notFound', jar.name))
-                    // プロジェクトルートからの相対パスを計算
                     String relativePath = getRelativePath(projectDir, jar)
+                    log(i18n('log.notFound', jar.name, relativePath))
+                    // プロジェクトルートからの相対パスを計算
                     
                     scannedDeps << new Dependency(
                         groupId: 'local.dependency',
