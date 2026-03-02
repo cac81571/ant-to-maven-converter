@@ -645,7 +645,7 @@ class AntToMavenTool {
                     }
                     return
                 }
-                String latest = getLatestVersion(dep.groupId, dep.artifactId)
+                String latest = getLatestVersion(dep.groupId, dep.artifactId, dep.version)
                 if (latest && isNewerVersion(latest, dep.version)) {
                     log(i18n('log.versionUpgraded', dep.groupId, dep.artifactId, dep.version, latest))
                     dep.versionComment = i18n('comment.versionUpgrade', dep.version, latest)
@@ -907,7 +907,7 @@ class AntToMavenTool {
                         log(i18n('log.versionUpgradeSkipped', key))
                         continue
                     }
-                    String latest = getLatestVersion(g, a)
+                    String latest = getLatestVersion(g, a, currentVer)
                     if (latest && isNewerVersion(latest, currentVer)) {
                         versionEl.setTextContent(latest)
                         updated++
@@ -1116,13 +1116,21 @@ class AntToMavenTool {
                 v.contains('snapshot') || v.contains('milestone') || v.contains('preview')
     }
 
+    /** バージョン文字列からメジャーバージョン（先頭の数値）を取得。取得できない場合は null */
+    private static Integer getMajorVersion(String version) {
+        if (!version?.trim()) return null
+        def m = (version.trim() =~ /[^\d]*(\d+)/)
+        return m.find() ? m.group(1).toInteger() : null
+    }
+
     /**
      * Maven Central の maven-metadata.xml から最新バージョンを取得する。
      * alpha / beta / rc / SNAPSHOT 等のプレリリース版は除外し、安定版のみから最新を選ぶ。
+     * currentVersion を指定した場合は同じメジャーバージョン内の最新のみを対象とする。
      * REST API は最新情報の反映にタイムラグがあるため、metadata.xml を参照する。
      * 例: https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml
      */
-    private String getLatestVersion(String groupId, String artifactId) {
+    private String getLatestVersion(String groupId, String artifactId, String currentVersion = null) {
         try {
             String pathSegment = groupId.replace('.', '/')
             String metadataUrl = "${MAVEN_REPO_BASE}/${pathSegment}/${artifactId}/maven-metadata.xml"
@@ -1132,10 +1140,16 @@ class AntToMavenTool {
             if (!versioning) return null
             def versionList = versioning.versions?.version?.collect { it.text()?.trim() }?.findAll { it } as List
             if (!versionList || versionList.isEmpty()) return null
-            // プレリリース版（alpha, beta, rc, SNAPSHOT 等）を除外してから最大を取得
+            // プレリリース版（alpha, beta, rc, SNAPSHOT 等）を除外
             def stableList = versionList.findAll { !isPreReleaseVersion(it) }
             if (stableList.isEmpty()) return null
-            String maxVer = stableList.max { String a, String b ->
+            // メジャーバージョンを変えない: currentVersion が指定されていれば同じメジャーに絞る
+            Integer major = getMajorVersion(currentVersion)
+            def candidateList = (major != null)
+                    ? stableList.findAll { getMajorVersion(it) == major }
+                    : stableList
+            if (candidateList.isEmpty()) return null
+            String maxVer = candidateList.max { String a, String b ->
                 try {
                     new ComparableVersion(a).compareTo(new ComparableVersion(b))
                 } catch (Exception e) { 0 }
