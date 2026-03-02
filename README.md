@@ -18,7 +18,7 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **i18n** … UI language switch: 日本語 / English (dropdown)
 - **JAR path exclusion** … Glob patterns in config (e.g. `**/test/**`) to exclude paths from scanning
 - **CSV export/import** … Export dependencies from `pom.xml` to CSV, or import from CSV into `pom.xml`
-- **History in text files** … Project folder and config file paths are stored under `~/.ant-to-maven-converter/` as `project-history.txt` and `config-history.txt` (one path per line, UTF-8). You can clear project history via the **Clear history** button.
+- **History in text files** … Project folder and config file paths are stored under `~/.ant-to-maven-converter/` as `project-history.txt` and `config-history.txt` (one path per line, UTF-8).
 
 ## Requirements
 

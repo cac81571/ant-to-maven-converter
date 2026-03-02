@@ -18,7 +18,7 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `setupConfig()` | 設定ファイルを読み込む。デフォルト配置先は `getDefaultConfigDirectory()`（JAR 実行時は JAR と同じフォルダ、IDE 実行時はクラスパス直下、それ以外は `~/.ant-to-maven-converter/`）。該当パスにファイルが無ければ JAR 同梱のリソースをコピーして作成し、ConfigSlurper でパースして `config` に格納する。 |
-| `setupUI()` | Swing でメインウィンドウを構築する。プロジェクトパス・設定ファイルパスのコンボは `readProjectPathHistory()` / `readConfigPathHistory()` で `~/.ant-to-maven-converter/` 内のテキストファイルから読み込む。言語コンボ、最新版チェック、POM生成／中止／pom 依存最新化、「履歴クリア」ボタン、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
+| `setupUI()` | Swing でメインウィンドウを構築する。プロジェクトパス・設定ファイルパスのコンボは `readProjectPathHistory()` / `readConfigPathHistory()` で `~/.ant-to-maven-converter/` 内のテキストファイルから読み込む。設定ファイルコンボ横の「参照」ボタンで `browseConfigFile()` を呼び出しファイル選択ダイアログでパスを指定する。言語コンボ、最新版チェック、POM生成／中止／pom 依存最新化、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
 
 ---
 
@@ -71,12 +71,11 @@
 
 | メソッド | 処理概要 |
 |----------|----------|
-| `openConfigFolder()` | 設定ファイルのパスから親フォルダを取得し、エクスプローラで開く。 |
+| `browseConfigFile()` | 設定ファイル用のファイル選択ダイアログ（JFileChooser）を表示し、選択したファイルのパスをコンボに表示して履歴に追加する。 |
 | `saveConfigPathHistory(String path)` | 設定ファイルパスをコンボの履歴に追加し、`~/.ant-to-maven-converter/config-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
 | `openProjectFolder()` | 選択中のプロジェクトルートパスのフォルダをエクスプローラで開く。 |
 | `openFolder(File folder, String dialogTitle)` | 指定フォルダを `Desktop.getDesktop().open()` で開く。失敗時はエラーダイアログを表示する。 |
 | `saveHistory(String path)` | プロジェクトルートパスをコンボの履歴に追加し、`~/.ant-to-maven-converter/project-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
-| `clearProjectPathHistory()` | 確認ダイアログのあと、プロジェクトフォルダ履歴をクリアする（`saveProjectPathHistory([])` で空を保存し、コンボを空にする）。 |
 
 ---
 

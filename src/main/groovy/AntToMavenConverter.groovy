@@ -122,7 +122,7 @@ class AntToMavenTool {
         if (projectRootLabel != null) projectRootLabel.text = i18n('ui.projectRootPath')
         if (configFileLabel != null) configFileLabel.text = i18n('ui.configFile')
         if (showFolderProjectBtn != null) showFolderProjectBtn.text = i18n('ui.showFolder')
-        if (showFolderConfigBtn != null) showFolderConfigBtn.text = i18n('ui.showFolder')
+        if (showFolderConfigBtn != null) showFolderConfigBtn.text = i18n('ui.browseConfig')
         if (latestVersionCheck != null) latestVersionCheck.text = i18n('ui.latestVersionReplace')
         if (runButton != null) runButton.text = i18n('ui.generatePom')
         if (stopButton != null) stopButton.text = i18n('ui.stop')
@@ -294,7 +294,6 @@ class AntToMavenTool {
                         projectRootLabel = label(text: i18n('ui.projectRootPath'))
                         pathCombo = comboBox(editable: true, items: history, preferredSize: [400, 25])
                         showFolderProjectBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openProjectFolder() })
-                        button(text: i18n('ui.clearProjectHistory'), actionPerformed: { clearProjectPathHistory() })
                         langLabel = label(text: i18n('ui.language'))
                         langCombo = comboBox(items: LANG_CODES.collect { i18n("lang.${it}") }, selectedIndex: langIndex, preferredSize: [85, 22],
                                 actionPerformed: {
@@ -319,7 +318,7 @@ class AntToMavenTool {
                         if (configHistory[0] && new File(configHistory[0]).absolutePath == oldDefaultPath)
                             configHistory[0] = defaultConfigPath
                         configPathCombo = comboBox(editable: true, items: configHistory, preferredSize: [450, 25])
-                        showFolderConfigBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openConfigFolder() })
+                        showFolderConfigBtn = button(text: i18n('ui.browseConfig'), actionPerformed: { browseConfigFile() })
                     }
 
                     panel(alignmentX: 0f) {
@@ -437,14 +436,27 @@ class AntToMavenTool {
         }
     }
 
-    /** 設定ファイルがあるフォルダをエクスプローラで開く */
-    private void openConfigFolder() {
-        String path = configPathCombo?.selectedItem?.toString()?.trim()
-        if (!path) {
-            path = getDefaultConfigPath()
+    /** 設定ファイルをファイル選択ダイアログで選び、コンボに表示・履歴に追加する */
+    private void browseConfigFile() {
+        def chooser = new JFileChooser()
+        chooser.dialogTitle = i18n('msg.dialogTitle.configFile')
+        chooser.fileSelectionMode = JFileChooser.FILES_ONLY
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(i18n('msg.configFileFilter'), 'groovy'))
+        String current = configPathCombo?.selectedItem?.toString()?.trim()
+        if (current) {
+            def f = new File(current)
+            if (f.parentFile?.exists()) chooser.currentDirectory = f.parentFile
+            if (f.exists()) chooser.selectedFile = f
         }
-        File dir = new File(path).parentFile ?: getDefaultConfigDirectory()
-        openFolder(dir, i18n('msg.dialogTitle.configFolder'))
+        if (chooser.showOpenDialog(mainFrame) == JFileChooser.APPROVE_OPTION) {
+            String selected = chooser.selectedFile?.absolutePath
+            if (selected) {
+                DefaultComboBoxModel model = (DefaultComboBoxModel) configPathCombo.model
+                if (model.getIndexOf(selected) == -1) model.addElement(selected)
+                configPathCombo.selectedItem = selected
+                saveConfigPathHistory(selected)
+            }
+        }
     }
 
     /** 設定ファイルパスを履歴に追加して永続化（.ant-to-maven-converter 配下のテキストファイルに保存） */
@@ -501,22 +513,6 @@ class AntToMavenTool {
             items.add(model.getElementAt(i).toString())
         }
         saveProjectPathHistory(items)
-    }
-
-    /** プロジェクトフォルダの履歴をクリア（確認ダイアログあり） */
-    private void clearProjectPathHistory() {
-        int choice = JOptionPane.showConfirmDialog(mainFrame,
-                i18n('msg.clearProjectHistoryConfirm'),
-                i18n('app.title'),
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.QUESTION_MESSAGE)
-        if (choice != JOptionPane.YES_OPTION) return
-        saveProjectPathHistory([])
-        DefaultComboBoxModel model = (DefaultComboBoxModel) pathCombo.model
-        model.removeAllElements()
-        model.addElement("")
-        pathCombo.selectedIndex = 0
-        log(i18n('msg.projectHistoryCleared'))
     }
 
     private void processDirectory(File projectDir, File outputPomFile) {
