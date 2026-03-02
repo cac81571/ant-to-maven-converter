@@ -45,15 +45,17 @@ pomProjectTemplate = '''
 //     [groupId: 'javax.servlet', artifactId: 'javax.servlet-api', version: '4.0.1', scope: 'provided']
 // ]
 
-// 置換: 検出した dependency を別のライブラリに差し替え（1:1 または 1:N）。from は検出時の groupId:artifactId
-// ※ ConfigSlurper ではキーにコロンを含む Map が正しく解釈されないため、リスト形式（from / to）を使用してください。
+// 置換: 検出した dependency を別のライブラリに差し替え（1:1 または 1:N）。
+// replaceDependencies は Map 形式。キー = 検出時の groupId:artifactId（文字列）、値 = 置換先。
+// 値は [ to: 依存 ] で 1 個、[ to: [ 依存1, 依存2, ... ] ] で複数。または値に直接 1 個の Map / リストを指定可能。
+// 各依存は Map（groupId, artifactId, version, scope...）または文字列 "groupId:artifactId:version"。
 // 1:1 の例:
 // replaceDependencies = [
-//     [ from: 'org.hibernate:hibernate-annotations', to: [groupId: 'org.hibernate', artifactId: 'hibernate-core', version: '5.4.0.Final', scope: 'compile'] ]
+//     'org.hibernate:hibernate-annotations': [ to: [groupId: 'org.hibernate', artifactId: 'hibernate-core', version: '5.4.0.Final', scope: 'compile'] ]
 // ]
 // 1:N の例（1つを複数に置換）:
 // replaceDependencies = [
-//     [ from: 'org.old:fat-lib', to: [
+//     'org.old:fat-lib': [ to: [
 //         [groupId: 'org.new', artifactId: 'new-a', version: '1.0', scope: 'compile'],
 //         [groupId: 'org.new', artifactId: 'new-b', version: '1.0', scope: 'compile']
 //     ]]
