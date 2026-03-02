@@ -1108,8 +1108,17 @@ class AntToMavenTool {
         )
     }
 
+    /** バージョンが alpha / beta / rc / SNAPSHOT 等のプレリリース版かどうか（バージョンアップ時に除外する） */
+    private static boolean isPreReleaseVersion(String version) {
+        if (!version?.trim()) return false
+        String v = version.trim().toLowerCase()
+        return v.contains('alpha') || v.contains('beta') || v.contains('-rc') || v.contains('.rc') ||
+                v.contains('snapshot') || v.contains('milestone') || v.contains('preview')
+    }
+
     /**
      * Maven Central の maven-metadata.xml から最新バージョンを取得する。
+     * alpha / beta / rc / SNAPSHOT 等のプレリリース版は除外し、安定版のみから最新を選ぶ。
      * REST API は最新情報の反映にタイムラグがあるため、metadata.xml を参照する。
      * 例: https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml
      */
@@ -1121,12 +1130,12 @@ class AntToMavenTool {
             def root = new XmlSlurper().parseText(xmlText)
             def versioning = root.versioning
             if (!versioning) return null
-            // <latest> を優先し、無ければ <versions> 一覧から最大バージョンを取得
-            String latest = versioning.latest?.text()?.trim()
-            if (latest) return latest
             def versionList = versioning.versions?.version?.collect { it.text()?.trim() }?.findAll { it } as List
             if (!versionList || versionList.isEmpty()) return null
-            String maxVer = versionList.max { String a, String b ->
+            // プレリリース版（alpha, beta, rc, SNAPSHOT 等）を除外してから最大を取得
+            def stableList = versionList.findAll { !isPreReleaseVersion(it) }
+            if (stableList.isEmpty()) return null
+            String maxVer = stableList.max { String a, String b ->
                 try {
                     new ComparableVersion(a).compareTo(new ComparableVersion(b))
                 } catch (Exception e) { 0 }
