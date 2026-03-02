@@ -47,11 +47,13 @@ class AntToMavenTool {
     private static final String MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select"
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
-    private static final String CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/"
+    private static final String USER_CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/"
     private static final String CONFIG_FILE = "ant-to-maven-default.groovy"
+    /** プロジェクトフォルダ履歴を保存するテキストファイル（1行1パス、UTF-8） */
+    private static final String PROJECT_HISTORY_FILE = "project-history.txt"
+    /** 設定ファイルパス履歴を保存するテキストファイル（1行1パス、UTF-8） */
+    private static final String CONFIG_HISTORY_FILE = "config-history.txt"
     private static final String PREF_NODE = "com.example.tools.ant2maven"
-    private static final String PREF_KEY_HISTORY = "pathHistory"
-    private static final String PREF_KEY_CONFIG_HISTORY = "configPathHistory"
     private static final String PREF_KEY_LANG = "language"
     private static final String[] LANG_CODES = ["ja", "en"]
 
@@ -139,12 +141,95 @@ class AntToMavenTool {
         return (args == null || args.length == 0) ? template : MessageFormat.format(template, args)
     }
 
+    /** JAR 実行時のみ、JAR ファイルの親ディレクトリを返す。IDE 実行時や取得失敗時は null */
+    private static File getJarDirectory() {
+        try {
+            def url = AntToMavenTool.class.protectionDomain?.codeSource?.location
+            if (url == null) return null
+            def file = new File(url.toURI())
+            if (file.exists() && file.name?.toLowerCase()?.endsWith('.jar'))
+                return file.parentFile
+            return null
+        } catch (Exception e) {
+            return null
+        }
+    }
+
+    /** デフォルトの設定ファイル配置ディレクトリ（JAR 実行時は JAR と同じフォルダ、IDE 実行時はクラスパス直下、取得できない場合は user.home 配下） */
+    private static File getDefaultConfigDirectory() {
+        def jarDir = getJarDirectory()
+        if (jarDir != null) return jarDir
+        // IDE 実行時: クラスパス上の ant-to-maven-default.groovy の親ディレクトリ（クラスパス直下）を使用
+        try {
+            def url = AntToMavenTool.class.getResource("/${CONFIG_FILE}")
+            if (url != null && "file".equalsIgnoreCase(url.protocol)) {
+                def file = new File(url.toURI())
+                if (file.exists() && file.isFile()) return file.parentFile
+            }
+        } catch (Exception e) { /* ignore */ }
+        return new File(USER_CONFIG_DIR)
+    }
+
+    /** デフォルトの設定ファイルの絶対パス */
+    private static String getDefaultConfigPath() {
+        return new File(getDefaultConfigDirectory(), CONFIG_FILE).absolutePath
+    }
+
+    /** 履歴保存用ディレクトリ（user.home 配下の .ant-to-maven-converter）。保存時に存在しなければ作成する */
+    private static File getHistoryDir() {
+        return new File(USER_CONFIG_DIR)
+    }
+
+    /** プロジェクトフォルダ履歴をテキストファイルから読み込む（1行1パス、UTF-8）。ファイルが無い場合は空リスト */
+    private static List<String> readProjectPathHistory() {
+        def file = new File(getHistoryDir(), PROJECT_HISTORY_FILE)
+        if (!file.exists() || !file.isFile()) return []
+        try {
+            return file.readLines("UTF-8").collect { it?.trim() }.findAll { it }
+        } catch (Exception e) {
+            return []
+        }
+    }
+
+    /** プロジェクトフォルダ履歴をテキストファイルに保存（1行1パス、UTF-8） */
+    private static void saveProjectPathHistory(List<String> items) {
+        def dir = getHistoryDir()
+        if (!dir.exists()) dir.mkdirs()
+        def file = new File(dir, PROJECT_HISTORY_FILE)
+        file.withWriter("UTF-8") { w ->
+            (items ?: []).each { w.write(it + "\n") }
+        }
+    }
+
+    /** 設定ファイルパス履歴をテキストファイルから読み込む。ファイルが無いか空の場合は [defaultPath] */
+    private static List<String> readConfigPathHistory(String defaultPath) {
+        def file = new File(getHistoryDir(), CONFIG_HISTORY_FILE)
+        if (!file.exists() || !file.isFile()) return defaultPath ? [defaultPath] : []
+        try {
+            def list = file.readLines("UTF-8").collect { it?.trim() }.findAll { it }
+            return list.isEmpty() && defaultPath ? [defaultPath] : list
+        } catch (Exception e) {
+            return defaultPath ? [defaultPath] : []
+        }
+    }
+
+    /** 設定ファイルパス履歴をテキストファイルに保存（1行1パス、UTF-8） */
+    private static void saveConfigPathHistoryToFile(List<String> items) {
+        def dir = getHistoryDir()
+        if (!dir.exists()) dir.mkdirs()
+        def file = new File(dir, CONFIG_HISTORY_FILE)
+        file.withWriter("UTF-8") { w ->
+            (items ?: []).each { w.write(it + "\n") }
+        }
+    }
+
     /**
      * 設定ファイルの読み込み（存在しない場合は JAR 同梱の ant-to-maven-default.groovy をコピーして作成）
+     * JAR 実行時は JAR と同じフォルダを優先する。
      */
     private void setupConfig() {
-        File configDir = new File(CONFIG_DIR)
-        if (!configDir.exists()) configDir.mkdirs()
+        File configDir = getDefaultConfigDirectory()
+        if (configDir != getJarDirectory() && !configDir.exists()) configDir.mkdirs()
 
         File configFile = new File(configDir, CONFIG_FILE)
         if (!configFile.exists()) {
@@ -188,9 +273,8 @@ class AntToMavenTool {
         boolean isJarExecution = this.class.getResource("AntToMavenTool.class").toString().startsWith("jar:")
         int closeOperation = isJarExecution ? JFrame.EXIT_ON_CLOSE : JFrame.DISPOSE_ON_CLOSE
 
-        // 履歴のロード
-        String historyStr = prefs.get(PREF_KEY_HISTORY, "")
-        List<String> history = historyStr ? historyStr.split("###").toList() : []
+        // 履歴のロード（ユーザーホーム配下 .ant-to-maven-converter のテキストファイルから）
+        List<String> history = readProjectPathHistory()
         String savedLang = prefs.get(PREF_KEY_LANG, "en")
         int langIndex = LANG_CODES.findIndexOf { it == savedLang }
         if (langIndex < 0) langIndex = 0
@@ -210,6 +294,7 @@ class AntToMavenTool {
                         projectRootLabel = label(text: i18n('ui.projectRootPath'))
                         pathCombo = comboBox(editable: true, items: history, preferredSize: [400, 25])
                         showFolderProjectBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openProjectFolder() })
+                        button(text: i18n('ui.clearProjectHistory'), actionPerformed: { clearProjectPathHistory() })
                         langLabel = label(text: i18n('ui.language'))
                         langCombo = comboBox(items: LANG_CODES.collect { i18n("lang.${it}") }, selectedIndex: langIndex, preferredSize: [85, 22],
                                 actionPerformed: {
@@ -226,9 +311,13 @@ class AntToMavenTool {
                     panel(alignmentX: 0f) {
                         flowLayout(alignment: FlowLayout.LEFT)
                         configFileLabel = label(text: i18n('ui.configFile'))
-                        def defaultConfigPath = new File(CONFIG_DIR, CONFIG_FILE).absolutePath
-                        def configHistoryStr = prefs.get(PREF_KEY_CONFIG_HISTORY, defaultConfigPath)
-                        def configHistory = configHistoryStr ? configHistoryStr.split("###") as List : [defaultConfigPath]
+                        def defaultConfigPath = getDefaultConfigPath()
+                        def oldDefaultPath = new File(USER_CONFIG_DIR, CONFIG_FILE).absolutePath
+                        def configHistory = readConfigPathHistory(defaultConfigPath)
+                        if (configHistory.isEmpty()) configHistory = [defaultConfigPath]
+                        // 保存されていた先頭（初期表示）が旧デフォルトなら、新デフォルトに差し替え
+                        if (configHistory[0] && new File(configHistory[0]).absolutePath == oldDefaultPath)
+                            configHistory[0] = defaultConfigPath
                         configPathCombo = comboBox(editable: true, items: configHistory, preferredSize: [450, 25])
                         showFolderConfigBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openConfigFolder() })
                     }
@@ -308,7 +397,7 @@ class AntToMavenTool {
         logArea.text = ""
         
         // 設定を再読み込み（コンボで選択中のパスから）
-        String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: new File(CONFIG_DIR, CONFIG_FILE).absolutePath
+        String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
         try {
             File configFile = new File(configPath)
             if (configFile.exists()) {
@@ -352,13 +441,13 @@ class AntToMavenTool {
     private void openConfigFolder() {
         String path = configPathCombo?.selectedItem?.toString()?.trim()
         if (!path) {
-            path = new File(CONFIG_DIR, CONFIG_FILE).absolutePath
+            path = getDefaultConfigPath()
         }
-        File dir = new File(path).parentFile ?: new File(CONFIG_DIR)
+        File dir = new File(path).parentFile ?: getDefaultConfigDirectory()
         openFolder(dir, i18n('msg.dialogTitle.configFolder'))
     }
 
-    /** 設定ファイルパスを履歴に追加して永続化 */
+    /** 設定ファイルパスを履歴に追加して永続化（.ant-to-maven-converter 配下のテキストファイルに保存） */
     private void saveConfigPathHistory(String path) {
         if (!path?.trim()) return
         DefaultComboBoxModel model = (DefaultComboBoxModel) configPathCombo.model
@@ -369,7 +458,7 @@ class AntToMavenTool {
         for (int i = 0; i < model.size; i++) {
             items.add(model.getElementAt(i).toString())
         }
-        prefs.put(PREF_KEY_CONFIG_HISTORY, items.join("###"))
+        saveConfigPathHistoryToFile(items)
     }
 
     /** 選択中のプロジェクトフォルダをエクスプローラで開く */
@@ -401,17 +490,33 @@ class AntToMavenTool {
         }
     }
 
+    /** プロジェクトフォルダ履歴を永続化（.ant-to-maven-converter 配下のテキストファイルに保存） */
     private void saveHistory(String path) {
         DefaultComboBoxModel model = (DefaultComboBoxModel) pathCombo.model
         if (model.getIndexOf(path) == -1) {
             model.addElement(path)
         }
-        
         List<String> items = []
         for (int i = 0; i < model.size; i++) {
             items.add(model.getElementAt(i).toString())
         }
-        prefs.put(PREF_KEY_HISTORY, items.join("###"))
+        saveProjectPathHistory(items)
+    }
+
+    /** プロジェクトフォルダの履歴をクリア（確認ダイアログあり） */
+    private void clearProjectPathHistory() {
+        int choice = JOptionPane.showConfirmDialog(mainFrame,
+                i18n('msg.clearProjectHistoryConfirm'),
+                i18n('app.title'),
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE)
+        if (choice != JOptionPane.YES_OPTION) return
+        saveProjectPathHistory([])
+        DefaultComboBoxModel model = (DefaultComboBoxModel) pathCombo.model
+        model.removeAllElements()
+        model.addElement("")
+        pathCombo.selectedIndex = 0
+        log(i18n('msg.projectHistoryCleared'))
     }
 
     private void processDirectory(File projectDir, File outputPomFile) {
@@ -873,7 +978,7 @@ class AntToMavenTool {
             int updated = 0
             try {
                 // 設定を再読み込み（excludeFromVersionUpgrade を反映）
-                String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: new File(CONFIG_DIR, CONFIG_FILE).absolutePath
+                String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
                 try {
                     File configFile = new File(configPath)
                     if (configFile.exists()) {
