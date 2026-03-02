@@ -1108,12 +1108,16 @@ class AntToMavenTool {
         )
     }
 
-    /** バージョンが alpha / beta / rc / SNAPSHOT 等のプレリリース版かどうか（バージョンアップ時に除外する） */
-    private static boolean isPreReleaseVersion(String version) {
+    private static final List<String> DEFAULT_PRE_RELEASE_PATTERNS = ['alpha', 'beta', '-rc', '.rc', 'snapshot', 'milestone', 'preview']
+
+    /** バージョンがプレリリース版かどうか（バージョンアップ時に除外する）。patterns 未指定時は DEFAULT_PRE_RELEASE_PATTERNS を使用 */
+    private static boolean isPreReleaseVersion(String version, List<String> patterns = null) {
         if (!version?.trim()) return false
         String v = version.trim().toLowerCase()
-        return v.contains('alpha') || v.contains('beta') || v.contains('-rc') || v.contains('.rc') ||
-                v.contains('snapshot') || v.contains('milestone') || v.contains('preview')
+        def list = (patterns != null && !patterns.isEmpty())
+                ? patterns.collect { it?.toString()?.trim()?.toLowerCase() }.findAll { it }
+                : DEFAULT_PRE_RELEASE_PATTERNS
+        return list.any { v.contains(it) }
     }
 
     /** バージョン文字列からメジャーバージョン（先頭の数値）を取得。取得できない場合は null */
@@ -1140,8 +1144,9 @@ class AntToMavenTool {
             if (!versioning) return null
             def versionList = versioning.versions?.version?.collect { it.text()?.trim() }?.findAll { it } as List
             if (!versionList || versionList.isEmpty()) return null
-            // プレリリース版（alpha, beta, rc, SNAPSHOT 等）を除外
-            def stableList = versionList.findAll { !isPreReleaseVersion(it) }
+            def preReleasePatterns = config?.preReleaseVersionPatterns instanceof Collection ? config.preReleaseVersionPatterns : null
+            // プレリリース版（設定またはデフォルトのパターンに該当するもの）を除外
+            def stableList = versionList.findAll { !isPreReleaseVersion(it, preReleasePatterns) }
             if (stableList.isEmpty()) return null
             // メジャーバージョンを変えない: currentVersion が指定されていれば同じメジャーに絞る
             Integer major = getMajorVersion(currentVersion)
