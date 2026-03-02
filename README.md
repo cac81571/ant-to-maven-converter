@@ -12,12 +12,13 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **JAR discovery** … Recursively scans the chosen directory and collects `.jar` files
 - **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search API](https://search.maven.org/) for groupId / artifactId / version
 - **Config file** … Groovy ConfigSlurper format for flexible “exclude”, “add”, and “replace” rules
-- **Latest version** … Optional upgrade of detected artifacts to their latest versions (uses Maven Central **maven-metadata.xml** for fresher data than the REST API)
+- **Latest version** … Optional upgrade of detected artifacts to their latest versions (uses Maven Central **maven-metadata.xml**). Pre-release versions (alpha, beta, rc, SNAPSHOT, etc.) are excluded, and the major version is not changed. Configurable via `preReleaseVersionPatterns`.
 - **Update pom.xml dependencies** … Button to update dependency versions in an existing `pom.xml` to the latest from Maven Central (preserves comments via DOM; respects `excludeFromVersionUpgrade`)
 - **Local JARs** … JARs not found on Maven Central are written to `pom.xml` with `system` scope
 - **i18n** … UI language switch: 日本語 / English (dropdown)
 - **JAR path exclusion** … Glob patterns in config (e.g. `**/test/**`) to exclude paths from scanning
 - **CSV export/import** … Export dependencies from `pom.xml` to CSV, or import from CSV into `pom.xml`
+- **History in text files** … Project folder and config file paths are stored under `~/.ant-to-maven-converter/` as `project-history.txt` and `config-history.txt` (one path per line, UTF-8). You can clear project history via the **Clear history** button.
 
 ## Requirements
 
@@ -48,8 +49,8 @@ Run the `main` method of the `AntToMavenTool` class.
 
 1. On startup the **“Ant to Maven POM Generator”** window opens.
 2. Set **Project folder** to the root of the Ant project to convert (parent of directories that contain JARs, e.g. `lib`).
-3. Optionally choose a **config file** path (default: `~/.ant-to-maven-converter/ant-to-maven-default.groovy`).
-4. Check **“Replace dependency versions with latest”** to upgrade detected dependencies to their latest versions.
+3. Optionally choose a **config file** path. Default: when run from a JAR, the config is read from the **same folder as the JAR**; when run from an IDE, from the **classpath root** (e.g. `src/main/resources/`). Fallback: `~/.ant-to-maven-converter/ant-to-maven-default.groovy`.
+4. Check **“Replace dependency versions with latest”** to upgrade detected dependencies to the latest **stable** version within the same major version (alpha/beta/rc/SNAPSHOT are excluded).
 5. Click **“Generate POM”** to scan the directory and generate `pom.xml`.
 6. If `pom.xml` already exists, you can choose Overwrite, Save as, or Cancel.
 
@@ -67,10 +68,15 @@ If the project already has a `pom.xml`, you can update its dependency versions t
 
 Configuration is in **Groovy ConfigSlurper** format.
 
-- **Default location**  
-  - Windows: `%USERPROFILE%\.ant-to-maven-converter\`  
-  - macOS/Linux: `~/.ant-to-maven-converter/`  
-  - File: `ant-to-maven-default.groovy` (a sample is created on first run)
+- **Default location**
+  - **JAR run:** same folder as the JAR (`ant-to-maven-default.groovy`; created from bundled template if missing)
+  - **IDE run:** classpath root (e.g. `src/main/resources/ant-to-maven-default.groovy`)
+  - **Fallback:** `~/.ant-to-maven-converter/` (Windows: `%USERPROFILE%\.ant-to-maven-converter\`)
+
+- **History storage**  
+  Project folder and config file path histories are stored under `~/.ant-to-maven-converter/` as plain text:
+  - `project-history.txt` — one project path per line (UTF-8)
+  - `config-history.txt` — one config path per line (UTF-8)
 
 ### Main options
 
@@ -80,7 +86,8 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `excludeJarPaths` | Glob patterns for JAR paths to exclude from scanning (e.g. `**/test/**`) |
 | `excludeFromVersionUpgrade` | Dependencies to skip when upgrading to latest (string `groupId:artifactId` or map with `key` and optional `version`). Used by “Replace with latest” and “Update pom.xml dependencies”. |
 | `addDependencies` | Dependencies to add at the top of the result |
-| `replaceDependencies` | Replace detected `groupId:artifactId` with other dependency(ies) (1:1 or 1:N). Use a list of maps with `from` and `to` (e.g. `[ from: 'g:a', to: [...] ]`) because ConfigSlurper does not reliably support colons in map keys. |
+| `replaceDependencies` | **Map**: key = `groupId:artifactId` (string), value = `[ to: singleDep ]` or `[ to: [ dep1, dep2, ... ] ]` for 1:1 or 1:N replacement. Each dep is a Map (`groupId`, `artifactId`, `version`, `scope`…) or string `"g:a:v"`. |
+| `preReleaseVersionPatterns` | List of substrings that mark a version as pre-release (excluded when upgrading). Default: `alpha`, `beta`, `-rc`, `.rc`, `snapshot`, `milestone`, `preview`. Case-insensitive. |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
 
 See the sample in the repo: `src/main/resources/ant-to-maven-default.groovy`.

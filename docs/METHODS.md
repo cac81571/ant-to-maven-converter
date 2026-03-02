@@ -17,8 +17,23 @@
 
 | メソッド | 処理概要 |
 |----------|----------|
-| `setupConfig()` | 設定ファイルを読み込む。`~/.ant-to-maven-converter/ant-to-maven-default.groovy` が無ければ JAR 同梱のリソースをコピーして作成し、ConfigSlurper でパースして `config` に格納する。 |
-| `setupUI()` | Swing でメインウィンドウを構築する。言語コンボ、プロジェクトパス・設定ファイルパスのコンボ、最新版チェック、POM生成／中止／pom 依存最新化ボタン、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
+| `setupConfig()` | 設定ファイルを読み込む。デフォルト配置先は `getDefaultConfigDirectory()`（JAR 実行時は JAR と同じフォルダ、IDE 実行時はクラスパス直下、それ以外は `~/.ant-to-maven-converter/`）。該当パスにファイルが無ければ JAR 同梱のリソースをコピーして作成し、ConfigSlurper でパースして `config` に格納する。 |
+| `setupUI()` | Swing でメインウィンドウを構築する。プロジェクトパス・設定ファイルパスのコンボは `readProjectPathHistory()` / `readConfigPathHistory()` で `~/.ant-to-maven-converter/` 内のテキストファイルから読み込む。言語コンボ、最新版チェック、POM生成／中止／pom 依存最新化、「履歴クリア」ボタン、ログエリア、進捗バー、CSV エクスポート／インポートボタンなどを配置する。 |
+
+---
+
+## 設定・履歴パス（static ヘルパー）
+
+| メソッド | 処理概要 |
+|----------|----------|
+| `getJarDirectory()` | JAR 実行時のみ、JAR ファイルの親ディレクトリを返す。IDE 実行時や取得失敗時は null。 |
+| `getDefaultConfigDirectory()` | デフォルトの設定ファイル配置ディレクトリ。JAR 実行時は `getJarDirectory()`、IDE 実行時はクラスパス上の `ant-to-maven-default.groovy` の親ディレクトリ、それ以外は `~/.ant-to-maven-converter/`。 |
+| `getDefaultConfigPath()` | デフォルトの設定ファイルの絶対パス（`getDefaultConfigDirectory()` + `ant-to-maven-default.groovy`）。 |
+| `getHistoryDir()` | 履歴保存用ディレクトリ（`~/.ant-to-maven-converter/`）。保存時に存在しなければ作成する。 |
+| `readProjectPathHistory()` | `~/.ant-to-maven-converter/project-history.txt` を UTF-8 で読み、1 行 1 パスでリストを返す。ファイルが無い場合は空リスト。 |
+| `saveProjectPathHistory(List<String> items)` | プロジェクトフォルダ履歴を `project-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
+| `readConfigPathHistory(String defaultPath)` | `~/.ant-to-maven-converter/config-history.txt` を読み、1 行 1 パスでリストを返す。ファイルが無いか空の場合は `[defaultPath]`。 |
+| `saveConfigPathHistoryToFile(List<String> items)` | 設定ファイルパス履歴を `config-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
 
 ---
 
@@ -40,7 +55,7 @@
 | `startProcess()` | 「POM生成」ボタン押下時の処理。パス検証、既存 pom.xml の上書き確認（上書きする／別名で保存／処理中止）、設定の再読み込み、履歴保存のあと、バックグラウンドで `processDirectory` を実行する。 |
 | `stopProcess()` | 「中止」ボタン押下時。`isRunning` を false にし、処理の停止を要求する（現在の処理の完了を待つ）。 |
 | `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名（拡張子・バージョン番号なし）を `stripVersionFromJarBaseName` で取得し、**`a:` 検索は行わず** `searchMavenCentralByQuery(nameForSearch)` で `q=` 一般検索のみ行う。ヒットすれば最新版を取得して追加、それでも見つからなければ `addSystemScopeDependency` で system スコープの依存を追加。最後に `generatePom` を呼び出す。 |
-| `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立て、オプションで `getLatestVersion` によるバージョンアップを適用（`isNewerVersion` でダウングレード防止）。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
+| `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立て、オプションで `getLatestVersion(groupId, artifactId, currentVersion)` によるバージョンアップを適用（同一メジャー内・プレリリース除外。`isNewerVersion` でダウングレード防止）。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
 
 ---
 
@@ -48,7 +63,7 @@
 
 | メソッド | 処理概要 |
 |----------|----------|
-| `updatePomDependenciesToLatest()` | 「pom.xml 依存関係最新化」ボタン押下時。設定を再読み込みし、`DocumentBuilder`（コメント保持）で pom.xml をパース。各 `<dependency>` について `isExcludedFromVersionUpgrade` で対象外ならスキップ、そうでなければ `getLatestVersion` で最新版を取得し、`isNewerVersion` で現行より新しい場合のみ `<version>` を更新。最後に `serializeDomDocument` で XML を書き出して保存。 |
+| `updatePomDependenciesToLatest()` | 「pom.xml 依存関係最新化」ボタン押下時。設定を再読み込みし、`DocumentBuilder`（コメント保持）で pom.xml をパース。各 `<dependency>` について `isExcludedFromVersionUpgrade` で対象外ならスキップ、そうでなければ `getLatestVersion(g, a, currentVer)` で同一メジャー・プレリリース除外後の最新版を取得し、`isNewerVersion` で現行より新しい場合のみ `<version>` を更新。最後に `serializeDomDocument` で XML を書き出して保存。 |
 
 ---
 
@@ -57,10 +72,11 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `openConfigFolder()` | 設定ファイルのパスから親フォルダを取得し、エクスプローラで開く。 |
-| `saveConfigPathHistory(String path)` | 設定ファイルパスをコンボの履歴に追加し、Preferences に永続化する。 |
+| `saveConfigPathHistory(String path)` | 設定ファイルパスをコンボの履歴に追加し、`~/.ant-to-maven-converter/config-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
 | `openProjectFolder()` | 選択中のプロジェクトルートパスのフォルダをエクスプローラで開く。 |
 | `openFolder(File folder, String dialogTitle)` | 指定フォルダを `Desktop.getDesktop().open()` で開く。失敗時はエラーダイアログを表示する。 |
-| `saveHistory(String path)` | プロジェクトルートパスをコンボの履歴に追加し、Preferences に永続化する。 |
+| `saveHistory(String path)` | プロジェクトルートパスをコンボの履歴に追加し、`~/.ant-to-maven-converter/project-history.txt` に 1 行 1 パス（UTF-8）で保存する。 |
+| `clearProjectPathHistory()` | 確認ダイアログのあと、プロジェクトフォルダ履歴をクリアする（`saveProjectPathHistory([])` で空を保存し、コンボを空にする）。 |
 
 ---
 
@@ -105,7 +121,9 @@
 | `buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys)` | MarkupBuilder に `<dependencies>` ブロックを出力する。除外された key をコメントで列挙し、各 Dependency の dependencyComment / versionComment / scope / systemPath / classifier を反映する。 |
 | `calculateSha1(File file)` | ファイルの SHA-1 ハッシュを計算して 16 進文字列で返す。 |
 | `searchMavenCentral(String sha1)` | Maven Central Search API に SHA-1 でクエリし、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。見つからなければ null。 |
-| `getLatestVersion(String groupId, String artifactId)` | Maven Central の **maven-metadata.xml**（例: `https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml`）を取得し、`<versioning><latest>` または `<versions>` 一覧から最新バージョンを返す。REST API は反映にタイムラグがあるため metadata.xml を採用。取得できない場合は null。 |
+| `getLatestVersion(String groupId, String artifactId, String currentVersion)` | Maven Central の **maven-metadata.xml** を取得し、`<versions>` 一覧から **プレリリース除外**（`isPreReleaseVersion` / 設定の `preReleaseVersionPatterns`）および **同一メジャー**（`currentVersion` 指定時は `getMajorVersion` で同じメジャーのみ）に絞ったうえで最大バージョンを返す。取得できない場合は null。 |
+| `isPreReleaseVersion(String version, List<String> patterns)` | バージョン文字列がプレリリースかどうか判定。`patterns` 未指定時はデフォルト（alpha, beta, -rc, .rc, snapshot, milestone, preview）を使用。大文字小文字無視。 |
+| `getMajorVersion(String version)` | バージョン文字列からメジャーバージョン（先頭の数値）を取得。取得できない場合は null。 |
 | `getRelativePath(File base, File file)` | `base` から `file` への相対パスを URI で計算して返す。 |
 | `updateProgress(int current, int max, String message)` | 進捗バーの maximum / value / string を EDT 上で更新する。 |
 | `log(String message)` | ログエリアにメッセージを追記し、キャレットを末尾に移動する（EDT で実行）。 |
@@ -246,9 +264,19 @@ flowchart TB
         MC[searchMavenCentral]
         MCQ[searchMavenCentralByQuery]
         GLV[getLatestVersion]
+        IS_PRE[isPreReleaseVersion]
+        MAJOR[getMajorVersion]
         STRIP[stripVersionFromJarBaseName]
         ADD_SYS[addSystemScopeDependency]
         LOG[log]
+    end
+    subgraph 設定・履歴
+        JAR_DIR[getJarDirectory]
+        DEFAULT_CFG[getDefaultConfigDirectory]
+        READ_PROJ[readProjectPathHistory]
+        READ_CFG[readConfigPathHistory]
+        SAVE_PROJ[saveProjectPathHistory]
+        SAVE_CFG[saveConfigPathHistoryToFile]
     end
     subgraph DOM・バージョン
         IS_EX[isExcludedFromVersionUpgrade]
@@ -259,6 +287,9 @@ flowchart TB
     R --> LI
     R --> SC
     R --> SU
+    SC --> DEFAULT_CFG
+    SU --> READ_PROJ
+    SU --> READ_CFG
     SP --> PD
     PD --> GP
     EX --> GPP
@@ -282,7 +313,7 @@ flowchart TB
 ## 処理の流れ（概要・テキスト）
 
 1. **起動** … `main` → `run` → `loadI18n` / `setupConfig` / `setupUI`
-2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR 収集・excludeJarPaths 除外 → SHA-1 → `searchMavenCentral`、未ヒット時は `stripVersionFromJarBaseName` + `searchMavenCentralByQuery`（`q=` のみ、`a:` 検索はスキップ）または `addSystemScopeDependency`）→ `generatePom`（除外・置換・追加 → `getLatestVersion` / `isNewerVersion` → POM 出力）
-3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で `isExcludedFromVersionUpgrade`／`getLatestVersion`／`isNewerVersion` → `serializeDomDocument` で保存
+2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR 収集・excludeJarPaths 除外 → SHA-1 → `searchMavenCentral`、未ヒット時は `stripVersionFromJarBaseName` + `searchMavenCentralByQuery`（`q=` のみ）または `addSystemScopeDependency`）→ `generatePom`（除外・置換・追加 → `getLatestVersion(..., currentVersion)`（同一メジャー・プレリリース除外）／`isNewerVersion` → POM 出力）。履歴は `saveProjectPathHistory` / `saveConfigPathHistoryToFile` でテキストファイルに保存。
+3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で `isExcludedFromVersionUpgrade`／`getLatestVersion(g, a, currentVer)`／`isNewerVersion` → `serializeDomDocument` で保存
 4. **CSV エクスポート** … `exportDependenciesToCsv` → `getProjectPomFile` → `parseDependenciesFromPom` → ファイル保存
 5. **CSV インポート** … `importDependenciesFromCsv` → `getProjectPomFile` → CSV 読み込み → XmlParser で pom 編集 → 保存
