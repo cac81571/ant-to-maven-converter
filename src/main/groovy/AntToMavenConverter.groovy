@@ -40,6 +40,7 @@ import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.NodeList
 import org.apache.maven.artifact.versioning.ComparableVersion
+import com.formdev.flatlaf.FlatLightLaf
 
 class AntToMavenTool {
 
@@ -48,6 +49,8 @@ class AntToMavenTool {
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
     private static final String USER_CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/"
+    /** 設定ファイルのデフォルト配置ディレクトリ */
+    private static final String DEFAULT_CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/config/"
     private static final String CONFIG_FILE = "ant-to-maven-default.groovy"
     /** プロジェクトフォルダ履歴を保存するテキストファイル（1行1パス、UTF-8） */
     private static final String PROJECT_HISTORY_FILE = "project-history.txt"
@@ -141,33 +144,9 @@ class AntToMavenTool {
         return (args == null || args.length == 0) ? template : MessageFormat.format(template, args)
     }
 
-    /** JAR 実行時のみ、JAR ファイルの親ディレクトリを返す。IDE 実行時や取得失敗時は null */
-    private static File getJarDirectory() {
-        try {
-            def url = AntToMavenTool.class.protectionDomain?.codeSource?.location
-            if (url == null) return null
-            def file = new File(url.toURI())
-            if (file.exists() && file.name?.toLowerCase()?.endsWith('.jar'))
-                return file.parentFile
-            return null
-        } catch (Exception e) {
-            return null
-        }
-    }
-
-    /** デフォルトの設定ファイル配置ディレクトリ（JAR 実行時は JAR と同じフォルダ、IDE 実行時はクラスパス直下、取得できない場合は user.home 配下） */
+    /** デフォルトの設定ファイル配置ディレクトリ（~/.ant-to-maven-converter/config/） */
     private static File getDefaultConfigDirectory() {
-        def jarDir = getJarDirectory()
-        if (jarDir != null) return jarDir
-        // IDE 実行時: クラスパス上の ant-to-maven-default.groovy の親ディレクトリ（クラスパス直下）を使用
-        try {
-            def url = AntToMavenTool.class.getResource("/${CONFIG_FILE}")
-            if (url != null && "file".equalsIgnoreCase(url.protocol)) {
-                def file = new File(url.toURI())
-                if (file.exists() && file.isFile()) return file.parentFile
-            }
-        } catch (Exception e) { /* ignore */ }
-        return new File(USER_CONFIG_DIR)
+        return new File(DEFAULT_CONFIG_DIR)
     }
 
     /** デフォルトの設定ファイルの絶対パス */
@@ -224,12 +203,11 @@ class AntToMavenTool {
     }
 
     /**
-     * 設定ファイルの読み込み（存在しない場合は JAR 同梱の ant-to-maven-default.groovy をコピーして作成）
-     * JAR 実行時は JAR と同じフォルダを優先する。
+     * 設定ファイルの読み込み（~/.ant-to-maven-converter/config/ を使用。存在しない場合は同梱の ant-to-maven-default.groovy をコピーして作成）
      */
     private void setupConfig() {
         File configDir = getDefaultConfigDirectory()
-        if (configDir != getJarDirectory() && !configDir.exists()) configDir.mkdirs()
+        if (!configDir.exists()) configDir.mkdirs()
 
         File configFile = new File(configDir, CONFIG_FILE)
         if (!configFile.exists()) {
@@ -257,16 +235,21 @@ class AntToMavenTool {
      * UIの構築
      */
     private void setupUI() {
-        // LookAndFeelの設定
+        // LookAndFeelの設定 (FlatLaf)
         try {
-            for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
-                if ("Nimbus".equals(info.getName())) {
-                    UIManager.setLookAndFeel(info.getClassName())
-                    break
-                }
-            }
+            FlatLightLaf.setup()
         } catch (Exception e) {
-            // Fallback to default
+            // Fallback to Nimbus
+            try {
+                for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
+                    if ("Nimbus".equals(info.getName())) {
+                        UIManager.setLookAndFeel(info.getClassName())
+                        break
+                    }
+                }
+            } catch (Exception e2) {
+                // Use system default
+            }
         }
 
         // 実行モード判定 (JAR vs IDE)
@@ -290,43 +273,67 @@ class AntToMavenTool {
                     boxLayout(axis: BoxLayout.Y_AXIS)
 
                     panel(alignmentX: 0f) {
-                        flowLayout(alignment: FlowLayout.LEFT)
-                        projectRootLabel = label(text: i18n('ui.projectRootPath'))
-                        pathCombo = comboBox(editable: true, items: history, preferredSize: [400, 25])
-                        showFolderProjectBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openProjectFolder() })
-                        langLabel = label(text: i18n('ui.language'))
-                        langCombo = comboBox(items: LANG_CODES.collect { i18n("lang.${it}") }, selectedIndex: langIndex, preferredSize: [85, 22],
-                                actionPerformed: {
-                                    int idx = langCombo.selectedIndex
-                                    if (idx >= 0 && idx < LANG_CODES.length) {
-                                        String lang = LANG_CODES[idx]
-                                        prefs.put(PREF_KEY_LANG, lang)
-                                        loadI18n(lang)
-                                        refreshUIStrings()
-                                    }
-                                })
+                        borderLayout()
+                        panel(constraints: BorderLayout.WEST) {
+                            flowLayout(alignment: FlowLayout.LEFT)
+                            projectRootLabel = label(text: i18n('ui.projectRootPath'))
+                        }
+                        panel(constraints: BorderLayout.CENTER) {
+                            borderLayout()
+                            pathCombo = comboBox(editable: true, items: history, preferredSize: [100, 25], constraints: BorderLayout.NORTH)
+                        }
+                        panel(constraints: BorderLayout.EAST) {
+                            flowLayout(alignment: FlowLayout.LEFT)
+                            showFolderProjectBtn = button(text: i18n('ui.showFolder'), actionPerformed: { openProjectFolder() })
+                            langLabel = label(text: i18n('ui.language'))
+                            langCombo = comboBox(items: LANG_CODES.collect { i18n("lang.${it}") }, selectedIndex: langIndex, preferredSize: [85, 22],
+                                    actionPerformed: {
+                                        int idx = langCombo.selectedIndex
+                                        if (idx >= 0 && idx < LANG_CODES.length) {
+                                            String lang = LANG_CODES[idx]
+                                            prefs.put(PREF_KEY_LANG, lang)
+                                            loadI18n(lang)
+                                            refreshUIStrings()
+                                        }
+                                    })
+                        }
                     }
 
                     panel(alignmentX: 0f) {
-                        flowLayout(alignment: FlowLayout.LEFT)
-                        configFileLabel = label(text: i18n('ui.configFile'))
-                        def defaultConfigPath = getDefaultConfigPath()
-                        def oldDefaultPath = new File(USER_CONFIG_DIR, CONFIG_FILE).absolutePath
-                        def configHistory = readConfigPathHistory(defaultConfigPath)
-                        if (configHistory.isEmpty()) configHistory = [defaultConfigPath]
-                        // 保存されていた先頭（初期表示）が旧デフォルトなら、新デフォルトに差し替え
-                        if (configHistory[0] && new File(configHistory[0]).absolutePath == oldDefaultPath)
-                            configHistory[0] = defaultConfigPath
-                        configPathCombo = comboBox(editable: true, items: configHistory, preferredSize: [450, 25])
-                        showFolderConfigBtn = button(text: i18n('ui.browseConfig'), actionPerformed: { browseConfigFile() })
+                        borderLayout()
+                        panel(constraints: BorderLayout.WEST) {
+                            flowLayout(alignment: FlowLayout.LEFT)
+                            configFileLabel = label(text: i18n('ui.configFile'))
+                        }
+                        panel(constraints: BorderLayout.CENTER) {
+                            borderLayout()
+                            def defaultConfigPath = getDefaultConfigPath()
+                            def oldDefaultPath = new File(DEFAULT_CONFIG_DIR, CONFIG_FILE).absolutePath
+                            def configHistory = readConfigPathHistory(defaultConfigPath)
+                            if (configHistory.isEmpty()) configHistory = [defaultConfigPath]
+                            // 保存されていた先頭（初期表示）が旧デフォルトなら、新デフォルトに差し替え
+                            if (configHistory[0] && new File(configHistory[0]).absolutePath == oldDefaultPath)
+                                configHistory[0] = defaultConfigPath
+                            configPathCombo = comboBox(editable: true, items: configHistory, preferredSize: [100, 25], constraints: BorderLayout.NORTH)
+                        }
+                        panel(constraints: BorderLayout.EAST) {
+                            flowLayout(alignment: FlowLayout.LEFT)
+                            showFolderConfigBtn = button(text: i18n('ui.browseConfig'), actionPerformed: { browseConfigFile() })
+                        }
                     }
 
                     panel(alignmentX: 0f) {
-                        flowLayout(alignment: FlowLayout.LEFT)
-                        latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
-                        runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
-                        stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
-                        updatePomDepsButton = button(text: i18n('ui.updatePomDeps'), actionPerformed: { updatePomDependenciesToLatest() })
+                        borderLayout()
+                        panel(constraints: BorderLayout.WEST) {
+                            flowLayout(alignment: FlowLayout.LEFT)
+                            latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
+                            runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
+                            stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
+                        }
+                        panel(constraints: BorderLayout.EAST) {
+                            flowLayout(alignment: FlowLayout.RIGHT)
+                            updatePomDepsButton = button(text: i18n('ui.updatePomDeps'), actionPerformed: { updatePomDependenciesToLatest() })
+                        }
                     }
                 }
 
@@ -338,14 +345,16 @@ class AntToMavenTool {
                 // 下部: コントロール
                 panel(constraints: BorderLayout.SOUTH) {
                     borderLayout()
-                    progressBar = progressBar(visible: true, stringPainted: true, string: i18n('ui.ready'))
-                    
+                    panel(constraints: BorderLayout.CENTER, border: BorderFactory.createEmptyBorder(6, 6, 6, 6)) {
+                        borderLayout()
+                        progressBar = progressBar(visible: true, stringPainted: true, string: i18n('ui.ready'), font: new Font("Dialog", Font.PLAIN, 12))
+                        widget(progressBar, constraints: BorderLayout.CENTER)
+                    }
                     panel(constraints: BorderLayout.EAST) {
                         flowLayout()
                         exportCsvBtn = button(text: i18n('ui.exportCsv'), actionPerformed: { exportDependenciesToCsv() })
                         importCsvBtn = button(text: i18n('ui.importCsv'), actionPerformed: { importDependenciesFromCsv() })
                     }
-                    widget(progressBar, constraints: BorderLayout.CENTER)
                 }
             }
         }
@@ -459,17 +468,16 @@ class AntToMavenTool {
         }
     }
 
-    /** 設定ファイルパスを履歴に追加して永続化（.ant-to-maven-converter 配下のテキストファイルに保存） */
+    /** 設定ファイルパスを履歴に追加して永続化（.ant-to-maven-converter 配下のテキストファイルに保存。前回使用パスを先頭に） */
     private void saveConfigPathHistory(String path) {
         if (!path?.trim()) return
         DefaultComboBoxModel model = (DefaultComboBoxModel) configPathCombo.model
-        if (model.getIndexOf(path) == -1) {
-            model.addElement(path)
-        }
         List<String> items = []
         for (int i = 0; i < model.size; i++) {
-            items.add(model.getElementAt(i).toString())
+            String item = model.getElementAt(i).toString()
+            if (item != path) items.add(item)
         }
+        items.add(0, path)  // 前回使用パスを先頭に
         saveConfigPathHistoryToFile(items)
     }
 
@@ -502,16 +510,15 @@ class AntToMavenTool {
         }
     }
 
-    /** プロジェクトフォルダ履歴を永続化（.ant-to-maven-converter 配下のテキストファイルに保存） */
+    /** プロジェクトフォルダ履歴を永続化（.ant-to-maven-converter 配下のテキストファイルに保存。前回使用パスを先頭に） */
     private void saveHistory(String path) {
         DefaultComboBoxModel model = (DefaultComboBoxModel) pathCombo.model
-        if (model.getIndexOf(path) == -1) {
-            model.addElement(path)
-        }
         List<String> items = []
         for (int i = 0; i < model.size; i++) {
-            items.add(model.getElementAt(i).toString())
+            String item = model.getElementAt(i).toString()
+            if (item != path) items.add(item)
         }
+        items.add(0, path)  // 前回使用パスを先頭に
         saveProjectPathHistory(items)
     }
 
@@ -965,7 +972,23 @@ class AntToMavenTool {
             JOptionPane.showMessageDialog(mainFrame, i18n('msg.updatePom.noDeps'), i18n('ui.updatePomDeps'), JOptionPane.INFORMATION_MESSAGE)
             return
         }
+        // 上書き確認（上書き・別名保存・取り消し）
+        File outputPomFile = pomFile
+        Object[] options = [i18n('overwrite.option'), i18n('overwrite.saveAs'), i18n('overwrite.cancel')]
+        int result = JOptionPane.showOptionDialog(mainFrame,
+            i18n('overwrite.prompt'),
+            i18n('overwrite.title'),
+            JOptionPane.DEFAULT_OPTION,
+            JOptionPane.QUESTION_MESSAGE,
+            null,
+            options,
+            options[0])
+        if (result == 2 || result == JOptionPane.CLOSED_OPTION) return
+        if (result == 1) {
+            outputPomFile = new File(pomFile.parentFile, "pom_updated_${System.currentTimeMillis()}.xml")
+        }
         final File pom = pomFile
+        final File pomOut = outputPomFile
         updatePomDepsButton.enabled = false
         logArea.text = ""
         log(i18n('log.updatePom.start'))
@@ -1020,14 +1043,15 @@ class AntToMavenTool {
                 }
                 if (updated > 0) {
                     String xml = serializeDomDocument(doc)
-                    pom.withWriter('UTF-8') { w -> w.write(xml) }
+                    pomOut.withWriter('UTF-8') { w -> w.write(xml) }
                 }
                 log(i18n('log.updatePom.complete'))
                 final int count = updated
+                final String outPath = pomOut.absolutePath
                 SwingUtilities.invokeLater {
                     updatePomDepsButton.enabled = true
                     JOptionPane.showMessageDialog(mainFrame,
-                        i18n('msg.updatePom.done', count.toString(), pom.absolutePath),
+                        i18n('msg.updatePom.done', count.toString(), outPath),
                         i18n('ui.updatePomDeps'), JOptionPane.INFORMATION_MESSAGE)
                 }
             } catch (Exception e) {
