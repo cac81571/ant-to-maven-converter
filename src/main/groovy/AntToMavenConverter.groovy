@@ -48,6 +48,16 @@ class AntToMavenTool {
     private static final String MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select"
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
+    private static final int API_CONNECT_TIMEOUT_MS = 3000
+    private static final int API_READ_TIMEOUT_MS = 4000
+    private static final int API_RETRY_COUNT = 6
+    private static final int API_RETRY_WAIT_MS = 350
+    /** API への最小呼び出し間隔（ms） */
+    private static final int API_MIN_INTERVAL_MS = 250
+    /** 429/503 などサーバー都合時のバックオフ（ms） */
+    private static final int API_RATE_LIMIT_BACKOFF_MS = 1200
+    private static final Object API_RATE_LOCK = new Object()
+    private static long nextApiRequestAtMs = 0L
     private static final String USER_CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/"
     /** 設定ファイルのデフォルト配置ディレクトリ */
     private static final String DEFAULT_CONFIG_DIR = System.getProperty("user.home") + "/.ant-to-maven-converter/config/"
@@ -74,6 +84,7 @@ class AntToMavenTool {
     private JButton exportCsvBtn
     private JButton importCsvBtn
     private JCheckBox latestVersionCheck
+    private JCheckBox allSystemScopeCheck
     private JButton runButton
     private JButton stopButton
     private JButton updatePomDepsButton
@@ -133,6 +144,7 @@ class AntToMavenTool {
         if (progressBar != null) progressBar.string = i18n('ui.ready')
         if (exportCsvBtn != null) exportCsvBtn.text = i18n('ui.exportCsv')
         if (importCsvBtn != null) importCsvBtn.text = i18n('ui.importCsv')
+        if (allSystemScopeCheck != null) allSystemScopeCheck.text = i18n('ui.allSystemScope')
     }
 
     private String i18n(String key) {
@@ -327,6 +339,11 @@ class AntToMavenTool {
                         panel(constraints: BorderLayout.WEST) {
                             flowLayout(alignment: FlowLayout.LEFT)
                             latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
+                            allSystemScopeCheck = checkBox(text: i18n('ui.allSystemScope'), selected: false,
+                                    actionPerformed: {
+                                        boolean forceSystem = allSystemScopeCheck.selected
+                                        latestVersionCheck.enabled = !forceSystem
+                                    })
                             runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
                             stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
                         }
@@ -569,6 +586,10 @@ class AntToMavenTool {
             updateProgress(count, jars.size(), i18n('log.analyzing', jar.name))
             
             try {
+                if (allSystemScopeCheck?.selected) {
+                    addSystemScopeDependency(projectDir, jar, scannedDeps)
+                    continue
+                }
                 String sha1 = calculateSha1(jar)
                 def artifact = searchMavenCentral(sha1)
                 
@@ -586,7 +607,8 @@ class AntToMavenTool {
                         artifactId: artifact.a,
                         version: artifact.v,
                         scope: 'compile',
-                        originalFile: jar
+                        originalFile: jar,
+                        versionSourceComment: artifact.sourceUrl ? i18n('comment.versionSourceUrl', artifact.sourceUrl) : null
                     )
                 } else {
                     // SHA1 でヒットしなかった場合: a:artifactId 検索は行わず、q=JARファイル名（拡張子・バージョン番号なし）で一般検索のみ行う
@@ -596,7 +618,8 @@ class AntToMavenTool {
                     def fallback = nameForSearch ? searchMavenCentralByQuery(nameForSearch) : null
                     if (fallback) {
                         Thread.sleep(200)  // レートリミット対策
-                        String latestVer = getLatestVersion(fallback.g, fallback.a)
+                        def latestInfo = getLatestVersionInfo(fallback.g, fallback.a)
+                        String latestVer = latestInfo?.version
                         if (latestVer) {
                             String relativePath = getRelativePath(projectDir, jar)
                             log(i18n('log.foundByArtifactId', jar.name, relativePath, fallback.g, fallback.a, latestVer))
@@ -605,7 +628,8 @@ class AntToMavenTool {
                                 artifactId: fallback.a,
                                 version: latestVer,
                                 scope: 'compile',
-                                originalFile: jar
+                                originalFile: jar,
+                                versionSourceComment: latestInfo?.sourceUrl ? i18n('comment.versionSourceUrl', latestInfo.sourceUrl) : null
                             )
                         } else {
                             addSystemScopeDependency(projectDir, jar, scannedDeps)
@@ -724,7 +748,7 @@ class AntToMavenTool {
             }
         }
 
-        // 3. バージョンアップの適用（「依存バージョンを最新に置き換える」がオンのとき、追加・除外・置換後の一覧に対して実施）
+        // 3. バージョンアップの適用（「バージョンを最新にする」がオンのとき、追加・除外・置換後の一覧に対して実施）
         if (latestVersionCheck?.selected) {
             log("\n" + i18n('log.versionUpgrade'))
             finalDependencies.each { dep ->
@@ -753,10 +777,12 @@ class AntToMavenTool {
                     }
                     return
                 }
-                String latest = getLatestVersion(dep.groupId, dep.artifactId, dep.version)
+                def latestInfo = getLatestVersionInfo(dep.groupId, dep.artifactId, dep.version)
+                String latest = latestInfo?.version
                 if (latest && isNewerVersion(latest, dep.version)) {
                     log(i18n('log.versionUpgraded', dep.groupId, dep.artifactId, dep.version, latest))
                     dep.versionComment = i18n('comment.versionUpgrade', dep.version, latest)
+                    dep.versionSourceComment = latestInfo?.sourceUrl ? i18n('comment.versionSourceUrl', latestInfo.sourceUrl) : null
                     dep.version = latest
                 }
                 Thread.sleep(200)
@@ -1125,6 +1151,9 @@ class AntToMavenTool {
                     if (dep.versionComment) {
                         mkp.comment(dep.versionComment)
                     }
+                    if (dep.versionSourceComment) {
+                        mkp.comment(dep.versionSourceComment)
+                    }
                     if (dep.scope && dep.scope != 'compile') {
                         scope(dep.scope)
                     }
@@ -1147,22 +1176,97 @@ class AntToMavenTool {
         return digest.digest().encodeHex().toString()
     }
 
+    /** API 呼び出し間隔を制御（短時間の連続アクセスを抑止） */
+    private void waitForApiRateLimitSlot() {
+        int minIntervalMs = getApiConfigInt('apiMinIntervalMs', API_MIN_INTERVAL_MS)
+        synchronized (API_RATE_LOCK) {
+            long now = System.currentTimeMillis()
+            long waitMs = nextApiRequestAtMs - now
+            if (waitMs > 0) {
+                Thread.sleep(waitMs)
+            }
+            nextApiRequestAtMs = System.currentTimeMillis() + minIntervalMs
+        }
+    }
+
+    /** HTTP GET（UTF-8）。429/503 は IOException として返す */
+    private static String fetchUrlText(String url, int connectTimeoutMs, int readTimeoutMs) {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection()
+        conn.setRequestMethod("GET")
+        conn.setConnectTimeout(connectTimeoutMs)
+        conn.setReadTimeout(readTimeoutMs)
+        conn.setRequestProperty("User-Agent", "ant-to-maven-converter")
+
+        int status = conn.responseCode
+        if (status == 429 || status == 503) {
+            throw new IOException("HTTP ${status}")
+        }
+        if (status >= 400) {
+            throw new IOException("HTTP ${status}")
+        }
+        return conn.inputStream.getText("UTF-8")
+    }
+
+    /** HTTP テキスト取得（タイムアウト/レートリミット時は待機してリトライ） */
+    private String fetchUrlTextWithRetry(String url, Integer connectTimeoutMs = null, Integer readTimeoutMs = null, Integer retryCount = null) {
+        int connectTimeout = connectTimeoutMs != null ? connectTimeoutMs : getApiConfigInt('apiConnectTimeoutMs', API_CONNECT_TIMEOUT_MS)
+        int readTimeout = readTimeoutMs != null ? readTimeoutMs : getApiConfigInt('apiReadTimeoutMs', API_READ_TIMEOUT_MS)
+        int retries = retryCount != null ? retryCount : getApiConfigInt('apiRetryCount', API_RETRY_COUNT)
+        int retryWaitMs = getApiConfigInt('apiRetryWaitMs', API_RETRY_WAIT_MS)
+        int rateLimitBackoffMs = getApiConfigInt('apiRateLimitBackoffMs', API_RATE_LIMIT_BACKOFF_MS)
+
+        Exception lastError = null
+        int attempts = Math.max(1, retries)
+        for (int i = 1; i <= attempts; i++) {
+            try {
+                waitForApiRateLimitSlot()
+                return fetchUrlText(url, connectTimeout, readTimeout)
+            } catch (Exception e) {
+                lastError = e
+                boolean isTimeout = (e instanceof java.net.SocketTimeoutException) || (e.cause instanceof java.net.SocketTimeoutException)
+                boolean isRateLimited = e.message?.contains("HTTP 429") || e.message?.contains("HTTP 503")
+                if ((!isTimeout && !isRateLimited) || i >= attempts) break
+                try {
+                    Thread.sleep(isRateLimited ? rateLimitBackoffMs : retryWaitMs)
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+        }
+        throw lastError
+    }
+
+    /** 設定ファイルの API 設定値を int として取得（未設定/不正値は defaultValue） */
+    private int getApiConfigInt(String key, int defaultValue) {
+        try {
+            def value = config?."${key}"
+            if (value == null) return defaultValue
+            if (value instanceof Number) return ((Number) value).intValue()
+            String text = value.toString()?.trim()
+            return text ? Integer.parseInt(text) : defaultValue
+        } catch (Exception ignored) {
+            return defaultValue
+        }
+    }
+
     private def searchMavenCentral(String sha1) {
+        String url = null;
         try {
             // クエリパラメータをURLエンコード
             String query = "1:\"${sha1}\""
             String encodedQuery = URLEncoder.encode(query, "UTF-8")
-            String url = "${MAVEN_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
+            url = "${MAVEN_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
             
-            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
+            String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
             
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
-                return [g: doc.g, a: doc.a, v: doc.v]
+                return [g: doc.g, a: doc.a, v: doc.v, sourceUrl: url]
             }
         } catch (Exception e) {
-            log(i18n('log.apiError', sha1, e.message))
+            log(i18n('log.apiError', url, e.message))
         }
         return null
     }
@@ -1187,7 +1291,7 @@ class AntToMavenTool {
         try {
             String q = "a:\"${artifactId}\""
             String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=1&wt=json"
-            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
+            String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
@@ -1206,7 +1310,7 @@ class AntToMavenTool {
     private def searchMavenCentralByQuery(String query) {
         try {
             String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(query, "UTF-8")}&rows=1&wt=json"
-            String jsonText = new URL(url).getText([connectTimeout: 5000, readTimeout: 5000])
+            String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
@@ -1221,6 +1325,7 @@ class AntToMavenTool {
     /** SHA1 でも名前検索でも見つからなかった場合に system スコープで依存を追加する */
     private void addSystemScopeDependency(File projectDir, File jar, List<Dependency> scannedDeps) {
         String relativePath = getRelativePath(projectDir, jar)
+        boolean forceAllSystemScope = allSystemScopeCheck?.selected ?: false
         log(i18n('log.notFound', jar.name, relativePath))
         scannedDeps << new Dependency(
             groupId: 'local.dependency',
@@ -1229,7 +1334,7 @@ class AntToMavenTool {
             scope: 'system',
             systemPath: "\${project.basedir}/${relativePath}",
             originalFile: jar,
-            dependencyComment: i18n('comment.systemScope')
+            dependencyComment: forceAllSystemScope ? null : i18n('comment.systemScope')
         )
     }
 
@@ -1260,10 +1365,15 @@ class AntToMavenTool {
      * 例: https://repo1.maven.org/maven2/org/primefaces/primefaces/maven-metadata.xml
      */
     private String getLatestVersion(String groupId, String artifactId, String currentVersion = null) {
+        return getLatestVersionInfo(groupId, artifactId, currentVersion)?.version
+    }
+
+    /** 最新バージョンと、その判定に使用した metadata URL を返す */
+    private Map getLatestVersionInfo(String groupId, String artifactId, String currentVersion = null) {
         try {
             String pathSegment = groupId.replace('.', '/')
             String metadataUrl = "${MAVEN_REPO_BASE}/${pathSegment}/${artifactId}/maven-metadata.xml"
-            String xmlText = new URL(metadataUrl).getText([connectTimeout: 5000, readTimeout: 10000])
+            String xmlText = fetchUrlTextWithRetry(metadataUrl, API_CONNECT_TIMEOUT_MS, 20000, API_RETRY_COUNT)
             def root = new XmlSlurper().parseText(xmlText)
             def versioning = root.versioning
             if (!versioning) return null
@@ -1284,7 +1394,7 @@ class AntToMavenTool {
                     new ComparableVersion(a).compareTo(new ComparableVersion(b))
                 } catch (Exception e) { 0 }
             }
-            return maxVer
+            return [version: maxVer, sourceUrl: metadataUrl]
         } catch (Exception e) {
             // ignore (404 やネットワークエラーなど)
         }
@@ -1332,6 +1442,7 @@ class AntToMavenTool {
         File originalFile
         String dependencyComment
         String versionComment
+        String versionSourceComment
 
         String toString() { "${groupId}:${artifactId}:${version}" }
     }

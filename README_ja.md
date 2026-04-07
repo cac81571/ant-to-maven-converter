@@ -49,10 +49,11 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 
 1. 起動すると **「Ant to Maven POM ジェネレーター」** ウィンドウが開きます。
 2. **プロジェクトフォルダ** に、変換したい Ant プロジェクトのルート（`lib` など JAR が含まれるディレクトリの親）を指定します。
-3. 必要に応じて **設定ファイル** のパスを選択。省略時は **JAR 実行時は JAR と同じフォルダ**、**IDE 実行時はクラスパス直下**（例: `src/main/resources/`）を参照。それ以外は `~/.ant-to-maven-converter/ant-to-maven-default.groovy`。
-4. **「依存バージョンを最新に置き換える」** にチェックを入れると、検出した依存関係を**同じメジャー内の最新安定版**に差し替えます（alpha / beta / rc / SNAPSHOT は除外）。
-5. **「POM生成」** をクリックすると、指定ディレクトリ以下がスキャンされ、`pom.xml` が生成されます。
-6. 既に `pom.xml` がある場合は「上書きする」「別名で保存」「処理中止」のいずれかを選択できます。
+3. 必要に応じて **設定ファイル** のパスを選択。省略時は `~/.ant-to-maven-converter/config/ant-to-maven-default.groovy` を使用します。
+4. **「バージョンを最新にする」** にチェックを入れると、検出した依存関係を**同じメジャー内の最新安定版**に差し替えます（alpha / beta / rc / SNAPSHOT は除外）。
+5. **「全て System Scope にする」** にチェックを入れると、すべての JAR を `system` スコープで出力します（この間「バージョンを最新にする」は非活性）。
+6. **「POM生成」** をクリックすると、指定ディレクトリ以下がスキャンされ、`pom.xml` が生成されます。
+7. 既に `pom.xml` がある場合は「上書きする」「別名で保存」「処理中止」のいずれかを選択できます。
 
 生成された `pom.xml` はプロジェクトルート（指定したパス直下）に出力されます。
 
@@ -69,9 +70,7 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 設定は **Groovy ConfigSlurper** 形式で記述します。
 
 - **保存場所（デフォルト）**
-  - **JAR 実行時:** JAR と同じフォルダの `ant-to-maven-default.groovy`（無ければ同梱テンプレートから作成）
-  - **IDE 実行時:** クラスパス直下（例: `src/main/resources/ant-to-maven-default.groovy`）
-  - **上記以外:** `~/.ant-to-maven-converter/`（Windows: `%USERPROFILE%\.ant-to-maven-converter\`）
+  - `~/.ant-to-maven-converter/config/ant-to-maven-default.groovy`（無ければ同梱テンプレートから作成）
 
 - **履歴の保存場所**  
   プロジェクトフォルダ・設定ファイルのパス履歴は `~/.ant-to-maven-converter/` 内のテキストファイルで管理します。
@@ -88,7 +87,15 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 | `addDependencies` | 検出結果の先頭に追加する依存関係のリスト |
 | `replaceDependencies` | **Map 形式**。キー = `groupId:artifactId`（文字列）、値 = `[ to: 依存1個 ]` または `[ to: [ 依存1, 依存2, ... ] ]` で 1:1 / 1:N 置換。各依存は Map（`groupId`, `artifactId`, `version`, `scope` 等）または文字列 `"g:a:v"`。 |
 | `preReleaseVersionPatterns` | バージョンアップ時にプレリリースとみなして除外する文字列のリスト。未設定時は `alpha`, `beta`, `-rc`, `.rc`, `snapshot`, `milestone`, `preview`。大文字小文字無視。 |
+| `apiConnectTimeoutMs` | Maven Central への接続タイムアウト（ミリ秒） |
+| `apiReadTimeoutMs` | Maven Central からの読み取りタイムアウト（ミリ秒） |
+| `apiRetryCount` | タイムアウト/レート制限時の再試行回数 |
+| `apiRetryWaitMs` | タイムアウト時の再試行待機時間（ミリ秒） |
+| `apiMinIntervalMs` | API 呼び出し間の最小間隔（ミリ秒、スロットリング） |
+| `apiRateLimitBackoffMs` | HTTP 429/503 時の追加待機時間（ミリ秒） |
 | `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |
+
+API 経由でバージョン取得/更新した依存には、取得元 URL（例: `maven-metadata.xml`）が `pom.xml` のコメントとして付与される場合があります。
 
 リポジトリ内のサンプルは `src/main/resources/ant-to-maven-default.groovy` を参照してください。
 

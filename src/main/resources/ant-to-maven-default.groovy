@@ -62,9 +62,9 @@ pomProjectTemplate = '''
 // ]
 
 // バージョンアップ時にプレリリースとみなして除外する文字列。バージョン文字列のいずれかを含むと除外（大文字小文字無視）。未設定時はデフォルト値を使用。
-// preReleaseVersionPatterns = [
-//     'alpha', 'beta', '-rc', '.rc', 'snapshot', 'milestone', 'preview'
-// ]
+preReleaseVersionPatterns = [
+    'alpha', 'beta', '-rc', '.rc', 'snapshot', 'milestone', 'preview'
+]
 
 // 依存関係の最新化を除外（「依存バージョンを最新に置き換える」がオンのとき、ここに指定した依存は最新検索しない）
 // 文字列のみ: 最新化をスキップし、検出時のバージョンのままにする
@@ -73,3 +73,17 @@ pomProjectTemplate = '''
 //     'org.example:legacy-lib',                    // スキップのみ（バージョンはそのまま）
 //     [key: 'org.example:another-lib', version: '2.1.0']  // 2.1.0 に固定
 // ]
+
+// --- API 通信設定（未設定時はアプリのデフォルト値を使用）---
+// 接続確立までのタイムアウト（ミリ秒）。DNS/ネットワークが遅い環境では長めにする。
+// apiConnectTimeoutMs = 3000
+// レスポンス読み取りのタイムアウト（ミリ秒）。大きいと1回の待ち時間が長くなる。
+// apiReadTimeoutMs = 4000
+// 失敗時の再試行回数。増やすほど成功率は上がるが、全体時間は長くなる。
+// apiRetryCount = 6
+// 再試行までの待機時間（ミリ秒）。短いと高速、長いとサーバー負荷を下げやすい。
+// apiRetryWaitMs = 350
+// API 呼び出し間の最小間隔（ミリ秒）。レートリミット回避用。
+// apiMinIntervalMs = 250
+// HTTP 429/503（混雑/制限）時の追加待機時間（ミリ秒）。
+// apiRateLimitBackoffMs = 1200

@@ -49,10 +49,11 @@ Run the `main` method of the `AntToMavenTool` class.
 
 1. On startup the **“Ant to Maven POM Generator”** window opens.
 2. Set **Project folder** to the root of the Ant project to convert (parent of directories that contain JARs, e.g. `lib`).
-3. Optionally choose a **config file** path. Default: when run from a JAR, the config is read from the **same folder as the JAR**; when run from an IDE, from the **classpath root** (e.g. `src/main/resources/`). Fallback: `~/.ant-to-maven-converter/ant-to-maven-default.groovy`.
-4. Check **“Replace dependency versions with latest”** to upgrade detected dependencies to the latest **stable** version within the same major version (alpha/beta/rc/SNAPSHOT are excluded).
-5. Click **“Generate POM”** to scan the directory and generate `pom.xml`.
-6. If `pom.xml` already exists, you can choose Overwrite, Save as, or Cancel.
+3. Optionally choose a **config file** path. Default: `~/.ant-to-maven-converter/config/ant-to-maven-default.groovy`.
+4. Check **“Use latest versions”** to upgrade detected dependencies to the latest **stable** version within the same major version (alpha/beta/rc/SNAPSHOT are excluded).
+5. Check **“Use System Scope for all”** to force all detected JARs to `system` scope (disables “Use latest versions” while enabled).
+6. Click **“Generate POM”** to scan the directory and generate `pom.xml`.
+7. If `pom.xml` already exists, you can choose Overwrite, Save as, or Cancel.
 
 The generated `pom.xml` is written under the project root (the path you specified).
 
@@ -69,9 +70,7 @@ If the project already has a `pom.xml`, you can update its dependency versions t
 Configuration is in **Groovy ConfigSlurper** format.
 
 - **Default location**
-  - **JAR run:** same folder as the JAR (`ant-to-maven-default.groovy`; created from bundled template if missing)
-  - **IDE run:** classpath root (e.g. `src/main/resources/ant-to-maven-default.groovy`)
-  - **Fallback:** `~/.ant-to-maven-converter/` (Windows: `%USERPROFILE%\.ant-to-maven-converter\`)
+  - `~/.ant-to-maven-converter/config/ant-to-maven-default.groovy` (created from bundled template if missing)
 
 - **History storage**  
   Project folder and config file path histories are stored under `~/.ant-to-maven-converter/` as plain text:
@@ -88,7 +87,15 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `addDependencies` | Dependencies to add at the top of the result |
 | `replaceDependencies` | **Map**: key = `groupId:artifactId` (string), value = `[ to: singleDep ]` or `[ to: [ dep1, dep2, ... ] ]` for 1:1 or 1:N replacement. Each dep is a Map (`groupId`, `artifactId`, `version`, `scope`…) or string `"g:a:v"`. |
 | `preReleaseVersionPatterns` | List of substrings that mark a version as pre-release (excluded when upgrading). Default: `alpha`, `beta`, `-rc`, `.rc`, `snapshot`, `milestone`, `preview`. Case-insensitive. |
+| `apiConnectTimeoutMs` | Connect timeout in milliseconds for Maven Central HTTP requests |
+| `apiReadTimeoutMs` | Read timeout in milliseconds for Maven Central HTTP requests |
+| `apiRetryCount` | Number of retries on timeout / rate-limit responses |
+| `apiRetryWaitMs` | Wait time (ms) before retry on timeout |
+| `apiMinIntervalMs` | Minimum interval (ms) between API requests (throttling) |
+| `apiRateLimitBackoffMs` | Backoff wait (ms) for HTTP 429/503 |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
+
+When a version is obtained or upgraded via API, the generated `pom.xml` may include a comment with the source URL (e.g. Maven metadata URL) near the dependency.
 
 See the sample in the repo: `src/main/resources/ant-to-maven-default.groovy`.
 
