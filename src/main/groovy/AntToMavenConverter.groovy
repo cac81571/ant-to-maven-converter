@@ -339,11 +339,7 @@ class AntToMavenTool {
                         panel(constraints: BorderLayout.WEST) {
                             flowLayout(alignment: FlowLayout.LEFT)
                             latestVersionCheck = checkBox(text: i18n('ui.latestVersionReplace'), selected: true)
-                            allSystemScopeCheck = checkBox(text: i18n('ui.allSystemScope'), selected: false,
-                                    actionPerformed: {
-                                        boolean forceSystem = allSystemScopeCheck.selected
-                                        latestVersionCheck.enabled = !forceSystem
-                                    })
+                            allSystemScopeCheck = checkBox(text: i18n('ui.allSystemScope'), selected: false)
                             runButton = button(text: i18n('ui.generatePom'), actionPerformed: { startProcess() })
                             stopButton = button(text: i18n('ui.stop'), enabled: false, actionPerformed: { stopProcess() })
                         }

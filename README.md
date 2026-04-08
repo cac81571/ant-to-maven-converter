@@ -51,7 +51,7 @@ Run the `main` method of the `AntToMavenTool` class.
 2. Set **Project folder** to the root of the Ant project to convert (parent of directories that contain JARs, e.g. `lib`).
 3. Optionally choose a **config file** path. Default: `~/.ant-to-maven-converter/config/ant-to-maven-default.groovy`.
 4. Check **“Use latest versions”** to upgrade detected dependencies to the latest **stable** version within the same major version (alpha/beta/rc/SNAPSHOT are excluded).
-5. Check **“Use System Scope for all”** to force all detected JARs to `system` scope (disables “Use latest versions” while enabled).
+5. Check **“Use System Scope for all”** to force all detected JARs to `system` scope.
 6. Click **“Generate POM”** to scan the directory and generate `pom.xml`.
 7. If `pom.xml` already exists, you can choose Overwrite, Save as, or Cancel.
 
