@@ -390,6 +390,9 @@ class AntToMavenTool {
             return
         }
 
+        String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
+        if (!reloadConfig(configPath, true, true)) return
+
         // pom.xml 上書き確認（処理の先頭で実施）
         File outputPomFile = new File(projectDir, "pom.xml")
         if (outputPomFile.exists()) {
@@ -417,19 +420,6 @@ class AntToMavenTool {
         pathCombo.enabled = false
         logArea.text = ""
         
-        // 設定を再読み込み（コンボで選択中のパスから）
-        String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
-        try {
-            File configFile = new File(configPath)
-            if (configFile.exists()) {
-                config = new ConfigSlurper().parse(configFile.toURI().toURL())
-                saveConfigPathHistory(configPath)
-                log(i18n('log.configReloaded', configPath))
-            }
-        } catch (Exception e) {
-            log(i18n('log.configLoadWarning', e.message))
-        }
-
         // バックグラウンドスレッドで実行
         final File pomOut = outputPomFile
         Thread.start {
@@ -455,6 +445,28 @@ class AntToMavenTool {
         if (isRunning.get()) {
             isRunning.set(false)
             log(i18n('log.stopRequested'))
+        }
+    }
+
+    private boolean reloadConfig(String configPath, boolean failIfMissing = false, boolean savePathHistory = false) {
+        try {
+            File configFile = new File(configPath)
+            if (!configFile.exists() || !configFile.isFile()) {
+                if (failIfMissing) {
+                    String msg = i18n('msg.configFileNotFound', configPath)
+                    JOptionPane.showMessageDialog(mainFrame, msg, i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
+                    log(msg)
+                    return false
+                }
+                return true
+            }
+            config = new ConfigSlurper().parse(configFile.toURI().toURL())
+            if (savePathHistory) saveConfigPathHistory(configPath)
+            log(i18n('log.configReloaded', configPath))
+            return true
+        } catch (Exception e) {
+            log(i18n('log.configLoadWarning', e.message))
+            return true
         }
     }
 
@@ -988,6 +1000,10 @@ class AntToMavenTool {
                 i18n('ui.updatePomDeps'), JOptionPane.WARNING_MESSAGE)
             return
         }
+
+        String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
+        if (!reloadConfig(configPath, true, false)) return
+
         // 依存が1件も無い場合は処理しない
         List<Dependency> deps = parseDependenciesFromPom(pomFile)
         if (deps.isEmpty()) {
@@ -1009,6 +1025,7 @@ class AntToMavenTool {
         if (result == 1) {
             outputPomFile = new File(pomFile.parentFile, "pom_updated_${System.currentTimeMillis()}.xml")
         }
+
         final File pom = pomFile
         final File pomOut = outputPomFile
         updatePomDepsButton.enabled = false
@@ -1018,17 +1035,6 @@ class AntToMavenTool {
         Thread.start {
             int updated = 0
             try {
-                // 設定を再読み込み（excludeFromVersionUpgrade を反映）
-                String configPath = configPathCombo?.selectedItem?.toString()?.trim() ?: getDefaultConfigPath()
-                try {
-                    File configFile = new File(configPath)
-                    if (configFile.exists()) {
-                        config = new ConfigSlurper().parse(configFile.toURI().toURL())
-                        log(i18n('log.configReloaded', configPath))
-                    }
-                } catch (Exception e) {
-                    log(i18n('log.configLoadWarning', e.message))
-                }
                 def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
 
                 // DOM パーサー（コメントを保持する設定）
