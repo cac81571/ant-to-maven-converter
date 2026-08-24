@@ -126,6 +126,15 @@
 | `getRelativePath(File base, File file)` | `base` から `file` への相対パスを URI で計算して返す。 |
 | `updateProgress(int current, int max, String message)` | 進捗バーの maximum / value / string を EDT 上で更新する。 |
 | `log(String message)` | ログエリアにメッセージを追記し、キャレットを末尾に移動する（EDT で実行）。 |
+| `isDebugLogEnabled()` | 設定 `debugLogEnabled` が有効か判定する。未設定（空 ConfigObject）時は true。 |
+| `getDebugLogDir()` | デバッグログ出力ディレクトリ。`debugLogDir` 未設定時は `~/.ant-to-maven-converter/logs/`。 |
+| `startDebugLog(String operation)` | タイムスタンプ付き `debug-yyyyMMdd-HHmmss.log` を開き、処理開始を書き込む。失敗時は null。 |
+| `pruneDebugLogs(File dir)` | 古いデバッグログを削除し、直近 20 件だけ残す。 |
+| `closeDebugLog()` | デバッグログファイルを閉じて解放する。 |
+| `debugLog(String message)` | タイムスタンプ付きでデバッグログファイルに 1 行追記する（未開始時は何もしない）。 |
+| `debugLogSearchHits(json)` | Maven Central Search API の `numFound` と各 hit の g / a / v / id / p をデバッグログに出す。 |
+| `formatDebugLine(String message)` | デバッグログ 1 行分の文字列（日時 + メッセージ）を組み立てる。 |
+| `stackTraceOf(Throwable e)` | 例外のスタックトレースを文字列で返す。 |
 
 ---
 

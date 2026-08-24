@@ -19,6 +19,7 @@
 - **JAR パス除外** … 設定で glob パターン（例: `**/test/**`）を指定し、スキャン対象から除外可能
 - **CSV エクスポート／インポート** … `pom.xml` の依存関係を CSV にエクスポート、または CSV から `pom.xml` にインポート
 - **履歴のテキスト保存** … プロジェクトフォルダ・設定ファイルのパス履歴は `~/.ant-to-maven-converter/` 配下の `project-history.txt` と `config-history.txt` に 1 行 1 パス（UTF-8）で保存されます。設定ファイルコンボ横の「参照」ボタンでファイル選択ダイアログからパスを指定できます。
+- **デバッグログ** … POM 生成や依存最新化時に、検索 URL・ヒット件数・groupId / artifactId / version などを `~/.ant-to-maven-converter/logs/debug-yyyyMMdd-HHmmss.log` に出力します（GUI のログエリアには出しません）。設定の `debugLogEnabled` / `debugLogDir` で制御できます。
 
 ## 必要環境
 
@@ -93,6 +94,8 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 | `apiRetryWaitMs` | タイムアウト時の再試行待機時間（ミリ秒） |
 | `apiMinIntervalMs` | API 呼び出し間の最小間隔（ミリ秒、スロットリング） |
 | `apiRateLimitBackoffMs` | HTTP 429/503 時の追加待機時間（ミリ秒） |
+| `debugLogEnabled` | デバッグログをファイル出力するか。未設定時は有効 |
+| `debugLogDir` | デバッグログの出力ディレクトリ。未設定時は `~/.ant-to-maven-converter/logs/` |
 | `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |
 
 API 経由でバージョン取得/更新した依存には、取得元 URL（例: `maven-metadata.xml`）が `pom.xml` のコメントとして付与される場合があります。

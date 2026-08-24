@@ -19,6 +19,7 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **JAR path exclusion** … Glob patterns in config (e.g. `**/test/**`) to exclude paths from scanning
 - **CSV export/import** … Export dependencies from `pom.xml` to CSV, or import from CSV into `pom.xml`
 - **History in text files** … Project folder and config file paths are stored under `~/.ant-to-maven-converter/` as `project-history.txt` and `config-history.txt` (one path per line, UTF-8).
+- **Debug log file** … On POM generation or dependency update, search URLs and hit details (groupId / artifactId / version, numFound, HTTP status) are written to `~/.ant-to-maven-converter/logs/debug-yyyyMMdd-HHmmss.log` (not shown in the GUI log). Controlled by `debugLogEnabled` / `debugLogDir`.
 
 ## Requirements
 
@@ -93,6 +94,8 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `apiRetryWaitMs` | Wait time (ms) before retry on timeout |
 | `apiMinIntervalMs` | Minimum interval (ms) between API requests (throttling) |
 | `apiRateLimitBackoffMs` | Backoff wait (ms) for HTTP 429/503 |
+| `debugLogEnabled` | Write debug logs to a file. Enabled when unset |
+| `debugLogDir` | Directory for debug log files. Default: `~/.ant-to-maven-converter/logs/` |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
 
 When a version is obtained or upgraded via API, the generated `pom.xml` may include a comment with the source URL (e.g. Maven metadata URL) near the dependency.

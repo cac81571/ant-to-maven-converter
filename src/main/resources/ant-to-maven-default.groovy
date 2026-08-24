@@ -87,3 +87,10 @@ preReleaseVersionPatterns = [
 // apiMinIntervalMs = 250
 // HTTP 429/503（混雑/制限）時の追加待機時間（ミリ秒）。
 // apiRateLimitBackoffMs = 1200
+
+// --- デバッグログ（検索 URL・ヒット情報などをファイル出力）---
+// 未設定時は有効。POM 生成 / 依存最新化のたびに ~/.ant-to-maven-converter/logs/debug-yyyyMMdd-HHmmss.log を作成する。
+// 直近 20 件を残し、古いファイルは削除する。GUI のログエリアには出さない。
+// debugLogEnabled = true
+// 出力先ディレクトリを変える場合:
+// debugLogDir = 'C:/logs/ant-to-maven-converter'

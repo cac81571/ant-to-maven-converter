@@ -29,7 +29,15 @@ import java.nio.file.Path
 import java.text.MessageFormat
 import java.util.Locale
 import java.util.Properties
+import java.io.BufferedWriter
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.io.PrintWriter
 import java.io.StringWriter
+import java.io.Writer
+import groovy.util.ConfigObject
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import javax.xml.parsers.DocumentBuilder
 import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.transform.OutputKeys
@@ -66,6 +74,12 @@ class AntToMavenTool {
     private static final String PROJECT_HISTORY_FILE = "project-history.txt"
     /** 設定ファイルパス履歴を保存するテキストファイル（1行1パス、UTF-8） */
     private static final String CONFIG_HISTORY_FILE = "config-history.txt"
+    /** デバッグログのデフォルト配置ディレクトリ名（user.home 配下 .ant-to-maven-converter/logs） */
+    private static final String DEBUG_LOG_DIR_NAME = "logs"
+    private static final DateTimeFormatter DEBUG_LOG_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+    private static final DateTimeFormatter DEBUG_LOG_FILE_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+    private static final Object DEBUG_LOG_LOCK = new Object()
+    private static final int DEBUG_LOG_KEEP_COUNT = 20
     private static final String PREF_NODE = "com.example.tools.ant2maven"
     private static final String PREF_KEY_LANG = "language"
     private static final String[] LANG_CODES = ["ja", "en"]
@@ -73,6 +87,7 @@ class AntToMavenTool {
     // --- UI コンポーネント ---
     private JFrame mainFrame
     private JTextArea logArea
+    private Writer debugLogWriter
     private JComboBox<String> pathCombo
     private JComboBox<String> configPathCombo
     private JComboBox<String> langCombo
@@ -423,12 +438,21 @@ class AntToMavenTool {
         // バックグラウンドスレッドで実行
         final File pomOut = outputPomFile
         Thread.start {
+            File debugFile = startDebugLog("generate-pom")
             try {
+                if (debugFile) log(i18n('log.debugFile', debugFile.absolutePath))
+                debugLog("projectDir=${projectDir.absolutePath}")
+                debugLog("outputPom=${pomOut.absolutePath}")
+                debugLog("latestVersion=${latestVersionCheck?.selected}")
+                debugLog("allSystemScope=${allSystemScopeCheck?.selected}")
                 processDirectory(projectDir, pomOut)
             } catch (Exception e) {
                 log(i18n('msg.error') + ": ${e.message}")
+                debugLog("ERROR: ${e.message}")
+                debugLog(stackTraceOf(e))
                 e.printStackTrace()
             } finally {
+                closeDebugLog()
                 SwingUtilities.invokeLater {
                     isRunning.set(false)
                     runButton.enabled = true
@@ -594,11 +618,16 @@ class AntToMavenTool {
             updateProgress(count, jars.size(), i18n('log.analyzing', jar.name))
             
             try {
+                String relativeJarPath = getRelativePath(projectDir, jar)
+                debugLog("---- JAR ${count}/${jars.size()} ----")
+                debugLog("file=${jar.name} path=${relativeJarPath}")
                 if (allSystemScopeCheck?.selected) {
+                    debugLog("skip search (all system scope)")
                     addSystemScopeDependency(projectDir, jar, scannedDeps)
                     continue
                 }
                 String sha1 = calculateSha1(jar)
+                debugLog("sha1=${sha1}")
                 def artifact = searchMavenCentral(sha1)
                 
                 if (artifact) {
@@ -622,6 +651,7 @@ class AntToMavenTool {
                     // SHA1 でヒットしなかった場合: a:artifactId 検索は行わず、q=JARファイル名（拡張子・バージョン番号なし）で一般検索のみ行う
                     String baseName = jar.name.toLowerCase().endsWith('.jar') ? jar.name[0..-5] : jar.name
                     String nameForSearch = stripVersionFromJarBaseName(baseName)
+                    debugLog("SHA-1 miss; fallback query='${nameForSearch}' (baseName='${baseName}')")
                     if (nameForSearch) Thread.sleep(200)  // レートリミット対策
                     def fallback = nameForSearch ? searchMavenCentralByQuery(nameForSearch) : null
                     if (fallback) {
@@ -648,6 +678,8 @@ class AntToMavenTool {
                 }
             } catch (Exception e) {
                 log(i18n('log.errorProcessing', jar.name, e.message))
+                debugLog("ERROR processing ${jar.name}: ${e.message}")
+                debugLog(stackTraceOf(e))
             }
             
             // APIレートリミット対策
@@ -673,7 +705,9 @@ class AntToMavenTool {
         def replacements = config.replaceDependencies instanceof Map ? config.replaceDependencies : [:]
         def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
 
-        println "excludes: ${excludes}"
+        debugLog("excludes=${excludes}")
+        debugLog("additions.size=${additions instanceof Collection ? additions.size() : 0}")
+        debugLog("replacements.keys=${replacements instanceof Map ? replacements.keySet() : []}")
 
         // 1. 除外と置換の適用 (scannedDependenciesを使用)
         scannedDependencies.each { dep ->
@@ -1034,7 +1068,11 @@ class AntToMavenTool {
         // ネットワークアクセスがあるためバックグラウンドスレッドで実行
         Thread.start {
             int updated = 0
+            File debugFile = startDebugLog("update-pom-deps")
             try {
+                if (debugFile) log(i18n('log.debugFile', debugFile.absolutePath))
+                debugLog("pom=${pom.absolutePath}")
+                debugLog("outputPom=${pomOut.absolutePath}")
                 def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
 
                 // DOM パーサー（コメントを保持する設定）
@@ -1060,6 +1098,7 @@ class AntToMavenTool {
                         continue
                     }
                     String latest = getLatestVersion(g, a, currentVer)
+                    debugLog("update pom dep ${g}:${a} current=${currentVer} latest=${latest}")
                     if (latest && isNewerVersion(latest, currentVer)) {
                         versionEl.setTextContent(latest)
                         updated++
@@ -1084,11 +1123,15 @@ class AntToMavenTool {
                 }
             } catch (Exception e) {
                 log(i18n('msg.updatePom.failed', e.message))
+                debugLog("ERROR: ${e.message}")
+                debugLog(stackTraceOf(e))
                 e.printStackTrace()
                 SwingUtilities.invokeLater {
                     updatePomDepsButton.enabled = true
                     JOptionPane.showMessageDialog(mainFrame, i18n('msg.updatePom.failed', e.message), i18n('msg.error'), JOptionPane.ERROR_MESSAGE)
                 }
+            } finally {
+                closeDebugLog()
             }
         }
     }
@@ -1192,7 +1235,7 @@ class AntToMavenTool {
     }
 
     /** HTTP GET（UTF-8）。429/503 は IOException として返す */
-    private static String fetchUrlText(String url, int connectTimeoutMs, int readTimeoutMs) {
+    private String fetchUrlText(String url, int connectTimeoutMs, int readTimeoutMs) {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection()
         conn.setRequestMethod("GET")
         conn.setConnectTimeout(connectTimeoutMs)
@@ -1200,13 +1243,17 @@ class AntToMavenTool {
         conn.setRequestProperty("User-Agent", "ant-to-maven-converter")
 
         int status = conn.responseCode
+        debugLog("HTTP GET ${url}")
+        debugLog("  status=${status}")
         if (status == 429 || status == 503) {
             throw new IOException("HTTP ${status}")
         }
         if (status >= 400) {
             throw new IOException("HTTP ${status}")
         }
-        return conn.inputStream.getText("UTF-8")
+        String body = conn.inputStream.getText("UTF-8")
+        debugLog("  bodyChars=${body?.length() ?: 0}")
+        return body
     }
 
     /** HTTP テキスト取得（タイムアウト/レートリミット時は待機してリトライ） */
@@ -1227,6 +1274,7 @@ class AntToMavenTool {
                 lastError = e
                 boolean isTimeout = (e instanceof java.net.SocketTimeoutException) || (e.cause instanceof java.net.SocketTimeoutException)
                 boolean isRateLimited = e.message?.contains("HTTP 429") || e.message?.contains("HTTP 503")
+                debugLog("  attempt ${i}/${attempts} failed: ${e.message} timeout=${isTimeout} rateLimited=${isRateLimited}")
                 if ((!isTimeout && !isRateLimited) || i >= attempts) break
                 try {
                     Thread.sleep(isRateLimited ? rateLimitBackoffMs : retryWaitMs)
@@ -1253,22 +1301,25 @@ class AntToMavenTool {
     }
 
     private def searchMavenCentral(String sha1) {
-        String url = null;
+        String url = null
         try {
             // クエリパラメータをURLエンコード
             String query = "1:\"${sha1}\""
             String encodedQuery = URLEncoder.encode(query, "UTF-8")
             url = "${MAVEN_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
-            
+            debugLog("SHA-1 search query=${query}")
+            debugLog("  URL: ${url}")
+
             String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
-            
+            debugLogSearchHits(json)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
                 return [g: doc.g, a: doc.a, v: doc.v, sourceUrl: url]
             }
         } catch (Exception e) {
             log(i18n('log.apiError', url, e.message))
+            debugLog("SHA-1 search error: ${e.message}")
         }
         return null
     }
@@ -1290,17 +1341,21 @@ class AntToMavenTool {
      * バージョンは getLatestVersion で取得すること。
      */
     private def searchMavenCentralByArtifactId(String artifactId) {
+        String url = null
         try {
             String q = "a:\"${artifactId}\""
-            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=1&wt=json"
+            url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=1&wt=json"
+            debugLog("artifactId search query=${q}")
+            debugLog("  URL: ${url}")
             String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
+            debugLogSearchHits(json)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
                 return [g: doc.g, a: doc.a]
             }
         } catch (Exception e) {
-            // フォールバック用のためログは出さず無視
+            debugLog("artifactId search error: ${e.message}")
         }
         return null
     }
@@ -1310,16 +1365,20 @@ class AntToMavenTool {
      * artifactId 検索で見つからない場合のフォールバック用。バージョンは getLatestVersion で取得すること。
      */
     private def searchMavenCentralByQuery(String query) {
+        String url = null
         try {
-            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(query, "UTF-8")}&rows=1&wt=json"
+            url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(query, "UTF-8")}&rows=1&wt=json"
+            debugLog("name search query=${query}")
+            debugLog("  URL: ${url}")
             String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
+            debugLogSearchHits(json)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
                 return [g: doc.g, a: doc.a]
             }
         } catch (Exception e) {
-            // フォールバック用のためログは出さず無視
+            debugLog("name search error: ${e.message}")
         }
         return null
     }
@@ -1329,6 +1388,7 @@ class AntToMavenTool {
         String relativePath = getRelativePath(projectDir, jar)
         boolean forceAllSystemScope = allSystemScopeCheck?.selected ?: false
         log(i18n('log.notFound', jar.name, relativePath))
+        debugLog("system scope fallback: ${jar.name} path=${relativePath}")
         scannedDeps << new Dependency(
             groupId: 'local.dependency',
             artifactId: jar.name.replace('.jar', ''),
@@ -1372,33 +1432,55 @@ class AntToMavenTool {
 
     /** 最新バージョンと、その判定に使用した metadata URL を返す */
     private Map getLatestVersionInfo(String groupId, String artifactId, String currentVersion = null) {
+        String metadataUrl = null
         try {
             String pathSegment = groupId.replace('.', '/')
-            String metadataUrl = "${MAVEN_REPO_BASE}/${pathSegment}/${artifactId}/maven-metadata.xml"
+            metadataUrl = "${MAVEN_REPO_BASE}/${pathSegment}/${artifactId}/maven-metadata.xml"
+            debugLog("latest version lookup: ${groupId}:${artifactId} current=${currentVersion}")
+            debugLog("  URL: ${metadataUrl}")
             String xmlText = fetchUrlTextWithRetry(metadataUrl, API_CONNECT_TIMEOUT_MS, 20000, API_RETRY_COUNT)
             def root = new XmlSlurper().parseText(xmlText)
             def versioning = root.versioning
-            if (!versioning) return null
+            if (!versioning) {
+                debugLog("  metadata: no <versioning>")
+                return null
+            }
+            String latest = versioning.latest?.text()
+            String release = versioning.release?.text()
+            String lastUpdated = versioning.lastUpdated?.text()
+            debugLog("  metadata.latest=${latest} release=${release} lastUpdated=${lastUpdated}")
             def versionList = versioning.versions?.version?.collect { it.text()?.trim() }?.findAll { it } as List
-            if (!versionList || versionList.isEmpty()) return null
+            if (!versionList || versionList.isEmpty()) {
+                debugLog("  versions: empty")
+                return null
+            }
+            debugLog("  versions.count=${versionList.size()}")
             def preReleasePatterns = config?.preReleaseVersionPatterns instanceof Collection ? config.preReleaseVersionPatterns : null
             // プレリリース版（設定またはデフォルトのパターンに該当するもの）を除外
             def stableList = versionList.findAll { !isPreReleaseVersion(it, preReleasePatterns) }
-            if (stableList.isEmpty()) return null
+            if (stableList.isEmpty()) {
+                debugLog("  stable versions: empty (all pre-release)")
+                return null
+            }
+            debugLog("  stable.count=${stableList.size()}")
             // メジャーバージョンを変えない: currentVersion が指定されていれば同じメジャーに絞る
             Integer major = getMajorVersion(currentVersion)
             def candidateList = (major != null)
                     ? stableList.findAll { getMajorVersion(it) == major }
                     : stableList
-            if (candidateList.isEmpty()) return null
+            if (candidateList.isEmpty()) {
+                debugLog("  candidates: empty (major=${major})")
+                return null
+            }
             String maxVer = candidateList.max { String a, String b ->
                 try {
                     new ComparableVersion(a).compareTo(new ComparableVersion(b))
                 } catch (Exception e) { 0 }
             }
+            debugLog("  selected=${maxVer} (majorFilter=${major})")
             return [version: maxVer, sourceUrl: metadataUrl]
         } catch (Exception e) {
-            // ignore (404 やネットワークエラーなど)
+            debugLog("  latest version lookup error: ${e.message}")
         }
         return null
     }
@@ -1430,6 +1512,121 @@ class AntToMavenTool {
             logArea.append(message + "\n")
             logArea.setCaretPosition(logArea.document.length)
         }
+    }
+
+    /** デバッグログを有効にするか。未設定時は true。ConfigSlurper の空 ConfigObject は未設定とみなす */
+    private boolean isDebugLogEnabled() {
+        try {
+            def value = config?.debugLogEnabled
+            if (value == null) return true
+            if (value instanceof ConfigObject) return ((ConfigObject) value).isEmpty()
+            if (value instanceof Boolean) return (Boolean) value
+            String text = value.toString()?.trim()
+            if (!text) return true
+            return Boolean.parseBoolean(text)
+        } catch (Exception ignored) {
+            return true
+        }
+    }
+
+    /** デバッグログの出力先ディレクトリ。設定 debugLogDir があればそれを使用 */
+    private File getDebugLogDir() {
+        try {
+            def value = config?.debugLogDir
+            if (value instanceof CharSequence) {
+                String text = value.toString().trim()
+                if (text) return new File(text)
+            } else if (value instanceof File) {
+                return (File) value
+            }
+        } catch (Exception ignored) {
+        }
+        return new File(USER_CONFIG_DIR, DEBUG_LOG_DIR_NAME)
+    }
+
+    /** 処理開始時にデバッグログファイルを開く。失敗時は null */
+    private File startDebugLog(String operation) {
+        closeDebugLog()
+        if (!isDebugLogEnabled()) return null
+        try {
+            File dir = getDebugLogDir()
+            if (!dir.exists()) dir.mkdirs()
+            pruneDebugLogs(dir)
+            String ts = LocalDateTime.now().format(DEBUG_LOG_FILE_TS)
+            File file = new File(dir, "debug-${ts}.log")
+            Writer w = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, true), "UTF-8"))
+            synchronized (DEBUG_LOG_LOCK) {
+                debugLogWriter = w
+            }
+            debugLog("=== debug log start ===")
+            debugLog("operation=${operation}")
+            debugLog("java.version=${System.getProperty('java.version')}")
+            return file
+        } catch (Exception e) {
+            log(i18n('log.debugFileFailed', e.message))
+            return null
+        }
+    }
+
+    /** 古いデバッグログを削除し、直近 DEBUG_LOG_KEEP_COUNT 件だけ残す */
+    private static void pruneDebugLogs(File dir) {
+        try {
+            List<File> files = dir.listFiles()?.findAll { File f ->
+                f.isFile() && f.name.startsWith("debug-") && f.name.endsWith(".log")
+            }?.sort { it.lastModified() }
+            if (!files || files.size() <= DEBUG_LOG_KEEP_COUNT) return
+            files.take(files.size() - DEBUG_LOG_KEEP_COUNT).each { it.delete() }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void closeDebugLog() {
+        synchronized (DEBUG_LOG_LOCK) {
+            if (debugLogWriter == null) return
+            try {
+                debugLogWriter.write(formatDebugLine("=== debug log end ==="))
+                debugLogWriter.flush()
+                debugLogWriter.close()
+            } catch (Exception ignored) {
+            }
+            debugLogWriter = null
+        }
+    }
+
+    private void debugLog(String message) {
+        synchronized (DEBUG_LOG_LOCK) {
+            if (debugLogWriter == null) return
+            try {
+                debugLogWriter.write(formatDebugLine(message))
+                debugLogWriter.flush()
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void debugLogSearchHits(def json) {
+        def numFound = json?.response?.numFound
+        def docs = json?.response?.docs
+        int shown = (docs instanceof Collection) ? docs.size() : 0
+        debugLog("  numFound=${numFound} shown=${shown}")
+        if (docs instanceof Collection && !docs.isEmpty()) {
+            docs.eachWithIndex { doc, i ->
+                debugLog("  hit[${i}]: g=${doc.g} a=${doc.a} v=${doc.v} id=${doc.id} p=${doc.p}")
+            }
+        } else {
+            debugLog("  hit: none")
+        }
+    }
+
+    private static String formatDebugLine(String message) {
+        return LocalDateTime.now().format(DEBUG_LOG_TS) + "  " + (message ?: "") + "\n"
+    }
+
+    private static String stackTraceOf(Throwable e) {
+        if (e == null) return ""
+        StringWriter sw = new StringWriter()
+        e.printStackTrace(new PrintWriter(sw))
+        return sw.toString()
     }
 
     // --- 内部クラス ---
