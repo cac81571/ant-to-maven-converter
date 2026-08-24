@@ -97,7 +97,7 @@
 | `stripVersionFromJarBaseName(String baseName)` | JAR のベース名（拡張子除く）から末尾のバージョン部分を除去する。例: `primefaces-15.0.5` → `primefaces`。正規表現で `-数字(.数字)*(-qualifier)?` 形式を削除。 |
 | `searchMavenCentralByArtifactId(String artifactId)` | Maven Central を `a:"artifactId"` で最大 20 件検索し、`versionCount` 最大の `[g, a]` を返す。 |
 | `searchMavenCentralByQuery(String query)` | 名前検索。まず `a:"query"`、無ければ一般 `q=`。いずれも `searchMavenCentralName` 経由で `versionCount` 最大（artifactId 一致優先）の `[g, a]` を返す。 |
-| `searchMavenCentralName(String query, boolean artifactIdQuery)` | Maven Central Search API を呼び、`selectMavenNameSearchHit` でヒットを選ぶ。 |
+| `searchMavenCentralName(String query, boolean artifactIdQuery)` | `https://central.sonatype.com/solrsearch/select` を呼び、`selectMavenNameSearchHit` でヒットを選ぶ。`a:name` は引用符なし（新 API は `a:"name"` を 0 件にする）。 |
 | `selectMavenNameSearchHit(json, String query)` | `artifactId` がクエリと一致するドキュメントを優先し、`versionCount` が最大の `[g, a]` を返す（人気順の近似）。 |
 | `addSystemScopeDependency(File projectDir, File jar, List<Dependency> scannedDeps)` | SHA-1 および名前検索でも見つからなかった JAR を、`groupId: local.dependency`、`system` スコープ、`systemPath` に `\${project.basedir}/相対パス` を設定して `scannedDeps` に追加する。 |
 
@@ -121,7 +121,7 @@
 |----------|----------|
 | `buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys)` | MarkupBuilder に `<dependencies>` ブロックを出力する。除外された key をコメントで列挙し、各 Dependency の dependencyComment / versionComment / scope / systemPath / classifier を反映する。 |
 | `calculateSha1(File file)` | ファイルの SHA-1 ハッシュを計算して 16 進文字列で返す。 |
-| `searchMavenCentral(String sha1)` | Maven Central Search API に SHA-1 でクエリし、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。見つからなければ null。 |
+| `searchMavenCentral(String sha1)` | SHA-1 で検索し、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。完全一致は `https://search.maven.org/solrsearch/select`（`1:"sha1"`）を使う。見つからなければ null。 |
 | `getLatestVersion(String groupId, String artifactId, String currentVersion)` | Maven Central の **maven-metadata.xml** を取得し、`<versions>` 一覧から **プレリリース除外**（`isPreReleaseVersion` / 設定の `preReleaseVersionPatterns`）および **同一メジャー**（`currentVersion` 指定時は `getMajorVersion` で同じメジャーのみ）に絞ったうえで最大バージョンを返す。取得できない場合は null。 |
 | `isPreReleaseVersion(String version, List<String> patterns)` | バージョン文字列がプレリリースかどうか判定。`patterns` 未指定時はデフォルト（alpha, beta, -rc, .rc, snapshot, milestone, preview）を使用。大文字小文字無視。 |
 | `getMajorVersion(String version)` | バージョン文字列からメジャーバージョン（先頭の数値）を取得。取得できない場合は null。 |

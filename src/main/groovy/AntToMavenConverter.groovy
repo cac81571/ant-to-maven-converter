@@ -53,7 +53,13 @@ import com.formdev.flatlaf.FlatLightLaf
 class AntToMavenTool {
 
     // --- 定数 ---
-    private static final String MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select"
+    /** Maven Central Search API（search.maven.org から移行） */
+    private static final String MAVEN_SEARCH_API = "https://central.sonatype.com/solrsearch/select"
+    /**
+     * SHA-1 完全一致検索。central.sonatype.com の 1: は引用符付きで 0 件、引用符なしだと別バージョンまでヒットするため
+     * レガシー Solr（search.maven.org）を使う。
+     */
+    private static final String MAVEN_SHA1_SEARCH_API = "https://search.maven.org/solrsearch/select"
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
     private static final int NAME_SEARCH_ROWS = 20
@@ -1311,7 +1317,7 @@ class AntToMavenTool {
             // クエリパラメータをURLエンコード
             String query = "1:\"${sha1}\""
             String encodedQuery = URLEncoder.encode(query, "UTF-8")
-            url = "${MAVEN_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
+            url = "${MAVEN_SHA1_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
             debugLog("SHA-1 search query=${query}")
             debugLog("  URL: ${url}")
 
@@ -1350,9 +1356,10 @@ class AntToMavenTool {
     }
 
     /**
-     * 名前検索。Maven Central を a:"クエリ" で複数件取得し、artifactId 一致かつ versionCount 最大
+     * 名前検索。Maven Central を a:クエリ で複数件取得し、artifactId 一致かつ versionCount 最大
      * （公開されている利用の多さの近似。mvnrepository の sort=popular 相当）を選ぶ。
      * ヒットが無ければ一般 q= 検索にフォールバックする。
+     * central.sonatype.com は Solr の引用符付きフレーズ（a:"name"）を解釈しないため引用符は付けない。
      */
     private def searchMavenCentralByQuery(String query) {
         def hit = searchMavenCentralName(query, true)
@@ -1363,12 +1370,12 @@ class AntToMavenTool {
 
     /**
      * Maven Central Search API で名前検索する。
-     * artifactIdQuery=true なら q=a:"name"、false なら q=name。いずれも rows 件取得して versionCount で選ぶ。
+     * artifactIdQuery=true なら q=a:name、false なら q=name。いずれも rows 件取得して versionCount で選ぶ。
      */
     private def searchMavenCentralName(String query, boolean artifactIdQuery) {
         String url = null
         try {
-            String q = artifactIdQuery ? "a:\"${query}\"" : query
+            String q = artifactIdQuery ? "a:${query}" : query
             url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=${NAME_SEARCH_ROWS}&wt=json"
             debugLog("name search query=${q}")
             debugLog("  URL: ${url}")
