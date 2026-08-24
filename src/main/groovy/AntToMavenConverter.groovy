@@ -56,6 +56,7 @@ class AntToMavenTool {
     private static final String MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select"
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
+    private static final int NAME_SEARCH_ROWS = 20
     private static final int API_CONNECT_TIMEOUT_MS = 3000
     private static final int API_READ_TIMEOUT_MS = 4000
     private static final int API_RETRY_COUNT = 6
@@ -1235,12 +1236,16 @@ class AntToMavenTool {
     }
 
     /** HTTP GET（UTF-8）。429/503 は IOException として返す */
-    private String fetchUrlText(String url, int connectTimeoutMs, int readTimeoutMs) {
+    private String fetchUrlText(String url, int connectTimeoutMs, int readTimeoutMs, String userAgent = null) {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection()
         conn.setRequestMethod("GET")
         conn.setConnectTimeout(connectTimeoutMs)
         conn.setReadTimeout(readTimeoutMs)
-        conn.setRequestProperty("User-Agent", "ant-to-maven-converter")
+        conn.setRequestProperty("User-Agent", userAgent ?: "ant-to-maven-converter")
+        if (userAgent) {
+            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+        }
 
         int status = conn.responseCode
         debugLog("HTTP GET ${url}")
@@ -1257,7 +1262,7 @@ class AntToMavenTool {
     }
 
     /** HTTP テキスト取得（タイムアウト/レートリミット時は待機してリトライ） */
-    private String fetchUrlTextWithRetry(String url, Integer connectTimeoutMs = null, Integer readTimeoutMs = null, Integer retryCount = null) {
+    private String fetchUrlTextWithRetry(String url, Integer connectTimeoutMs = null, Integer readTimeoutMs = null, Integer retryCount = null, String userAgent = null) {
         int connectTimeout = connectTimeoutMs != null ? connectTimeoutMs : getApiConfigInt('apiConnectTimeoutMs', API_CONNECT_TIMEOUT_MS)
         int readTimeout = readTimeoutMs != null ? readTimeoutMs : getApiConfigInt('apiReadTimeoutMs', API_READ_TIMEOUT_MS)
         int retries = retryCount != null ? retryCount : getApiConfigInt('apiRetryCount', API_RETRY_COUNT)
@@ -1269,7 +1274,7 @@ class AntToMavenTool {
         for (int i = 1; i <= attempts; i++) {
             try {
                 waitForApiRateLimitSlot()
-                return fetchUrlText(url, connectTimeout, readTimeout)
+                return fetchUrlText(url, connectTimeout, readTimeout, userAgent)
             } catch (Exception e) {
                 lastError = e
                 boolean isTimeout = (e instanceof java.net.SocketTimeoutException) || (e.cause instanceof java.net.SocketTimeoutException)
@@ -1337,50 +1342,74 @@ class AntToMavenTool {
     }
 
     /**
-     * artifactId で Maven Central を検索し、最初にヒットした groupId / artifactId を返す。
+     * artifactId で Maven Central を検索し、人気（versionCount）が最大の groupId / artifactId を返す。
      * バージョンは getLatestVersion で取得すること。
      */
     private def searchMavenCentralByArtifactId(String artifactId) {
-        String url = null
-        try {
-            String q = "a:\"${artifactId}\""
-            url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=1&wt=json"
-            debugLog("artifactId search query=${q}")
-            debugLog("  URL: ${url}")
-            String jsonText = fetchUrlTextWithRetry(url)
-            def json = jsonSlurper.parseText(jsonText)
-            debugLogSearchHits(json)
-            if (json.response.numFound > 0) {
-                def doc = json.response.docs[0]
-                return [g: doc.g, a: doc.a]
-            }
-        } catch (Exception e) {
-            debugLog("artifactId search error: ${e.message}")
-        }
-        return null
+        return searchMavenCentralName(artifactId, true)
     }
 
     /**
-     * 一般クエリ q= で Maven Central を検索し、最初にヒットした groupId / artifactId を返す。
-     * artifactId 検索で見つからない場合のフォールバック用。バージョンは getLatestVersion で取得すること。
+     * 名前検索。Maven Central を a:"クエリ" で複数件取得し、artifactId 一致かつ versionCount 最大
+     * （公開されている利用の多さの近似。mvnrepository の sort=popular 相当）を選ぶ。
+     * ヒットが無ければ一般 q= 検索にフォールバックする。
      */
     private def searchMavenCentralByQuery(String query) {
+        def hit = searchMavenCentralName(query, true)
+        if (hit) return hit
+        debugLog("name search: a: miss; fallback to general q=")
+        return searchMavenCentralName(query, false)
+    }
+
+    /**
+     * Maven Central Search API で名前検索する。
+     * artifactIdQuery=true なら q=a:"name"、false なら q=name。いずれも rows 件取得して versionCount で選ぶ。
+     */
+    private def searchMavenCentralName(String query, boolean artifactIdQuery) {
         String url = null
         try {
-            url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(query, "UTF-8")}&rows=1&wt=json"
-            debugLog("name search query=${query}")
+            String q = artifactIdQuery ? "a:\"${query}\"" : query
+            url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=${NAME_SEARCH_ROWS}&wt=json"
+            debugLog("name search query=${q}")
             debugLog("  URL: ${url}")
             String jsonText = fetchUrlTextWithRetry(url)
             def json = jsonSlurper.parseText(jsonText)
-            debugLogSearchHits(json)
-            if (json.response.numFound > 0) {
-                def doc = json.response.docs[0]
-                return [g: doc.g, a: doc.a]
-            }
+            return selectMavenNameSearchHit(json, query)
         } catch (Exception e) {
             debugLog("name search error: ${e.message}")
+            return null
         }
-        return null
+    }
+
+    /**
+     * artifactId がクエリと一致するドキュメントを優先し、その中で versionCount が最大のものを返す。
+     * versionCount はリリース数で、人気順の近似として使う。
+     */
+    private def selectMavenNameSearchHit(def json, String query) {
+        def docs = json?.response?.docs
+        def numFound = json?.response?.numFound
+        int shown = (docs instanceof Collection) ? docs.size() : 0
+        debugLog("  numFound=${numFound} shown=${shown}")
+        if (!(docs instanceof Collection) || docs.isEmpty()) {
+            debugLog("  hit: none")
+            return null
+        }
+        docs.eachWithIndex { doc, i ->
+            debugLog("  hit[${i}]: g=${doc.g} a=${doc.a} latest=${doc.latestVersion ?: doc.v} versionCount=${doc.versionCount} id=${doc.id}")
+        }
+        String q = query?.trim()?.toLowerCase()
+        def exact = docs.findAll { it.a?.toString()?.toLowerCase() == q }
+        def pool = exact ? exact : docs
+        def selected = pool.max { doc ->
+            def vc = doc.versionCount
+            (vc instanceof Number) ? ((Number) vc).intValue() : 0
+        }
+        if (!selected) {
+            debugLog("  hit: none")
+            return null
+        }
+        debugLog("  selected: g=${selected.g} a=${selected.a} versionCount=${selected.versionCount} (exactArtifactId=${!exact.isEmpty()})")
+        return [g: selected.g, a: selected.a]
     }
 
     /** SHA1 でも名前検索でも見つからなかった場合に system スコープで依存を追加する */
@@ -1611,7 +1640,7 @@ class AntToMavenTool {
         debugLog("  numFound=${numFound} shown=${shown}")
         if (docs instanceof Collection && !docs.isEmpty()) {
             docs.eachWithIndex { doc, i ->
-                debugLog("  hit[${i}]: g=${doc.g} a=${doc.a} v=${doc.v} id=${doc.id} p=${doc.p}")
+                debugLog("  hit[${i}]: g=${doc.g} a=${doc.a} v=${doc.v ?: doc.latestVersion} id=${doc.id} p=${doc.p} versionCount=${doc.versionCount}")
             }
         } else {
             debugLog("  hit: none")

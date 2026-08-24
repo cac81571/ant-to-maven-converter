@@ -10,7 +10,7 @@
 
 - **GUI 操作** … Swing によるウィンドウで、プロジェクトパス選択・実行・ログ確認が可能
 - **JAR の自動検出** … 指定ディレクトリ以下を再帰的にスキャンし、`.jar` を収集
-- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索
+- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search API](https://search.maven.org/) で groupId / artifactId / version を検索。SHA-1 で見つからない場合の **名前検索** は `a:"JARベース名"` で最大 20 件取得し、`versionCount` が最大のアーティファクトを選びます（mvnrepository.com の `sort=popular` に近い人気順の近似）。ヒットが無ければ一般 `q=` 検索にフォールバックします。
 - **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
 - **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード（Maven Central の **maven-metadata.xml** を参照）。プレリリース（alpha / beta / rc / SNAPSHOT 等）は除外し、メジャーバージョンは変更しません。`preReleaseVersionPatterns` で除外文字列を設定可能。
 - **pom.xml 依存関係最新化** … 既存の `pom.xml` の依存バージョンを Maven Central の最新に更新するボタン（DOM でコメントを保持、`excludeFromVersionUpgrade` を尊重）

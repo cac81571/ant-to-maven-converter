@@ -54,7 +54,7 @@
 |----------|----------|
 | `startProcess()` | 「POM生成」ボタン押下時の処理。パス検証、既存 pom.xml の上書き確認（上書きする／別名で保存／処理中止）、設定の再読み込み、履歴保存のあと、バックグラウンドで `processDirectory` を実行する。 |
 | `stopProcess()` | 「中止」ボタン押下時。`isRunning` を false にし、処理の停止を要求する（現在の処理の完了を待つ）。 |
-| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名（拡張子・バージョン番号なし）を `stripVersionFromJarBaseName` で取得し、**`a:` 検索は行わず** `searchMavenCentralByQuery(nameForSearch)` で `q=` 一般検索のみ行う。ヒットすれば最新版を取得して追加、それでも見つからなければ `addSystemScopeDependency` で system スコープの依存を追加。最後に `generatePom` を呼び出す。 |
+| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名（拡張子・バージョン番号なし）を `stripVersionFromJarBaseName` で取得し、`searchMavenCentralByQuery(nameForSearch)` で Maven Central の名前検索（`a:"name"` + `versionCount` 最大）を行う。ヒットすれば最新版を取得して追加、それでも見つからなければ `addSystemScopeDependency` で system スコープの依存を追加。最後に `generatePom` を呼び出す。 |
 | `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立て、オプションで `getLatestVersion(groupId, artifactId, currentVersion)` によるバージョンアップを適用（同一メジャー内・プレリリース除外。`isNewerVersion` でダウングレード防止）。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
 
 ---
@@ -95,8 +95,10 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `stripVersionFromJarBaseName(String baseName)` | JAR のベース名（拡張子除く）から末尾のバージョン部分を除去する。例: `primefaces-15.0.5` → `primefaces`。正規表現で `-数字(.数字)*(-qualifier)?` 形式を削除。 |
-| `searchMavenCentralByArtifactId(String artifactId)` | Maven Central Search API を `a:"artifactId"` で検索し、最初にヒットした `[g, a]` を返す。（現在の POM 生成フローでは未使用。SHA-1 未ヒット時は `searchMavenCentralByQuery` のみ使用。） |
-| `searchMavenCentralByQuery(String query)` | 一般クエリ `q=` で Maven Central を検索し、最初にヒットした `[g, a]` を返す。SHA-1 で見つからない場合、JAR ファイル名（拡張子・バージョン番号なし）でこの検索のみをフォールバックとして行う。 |
+| `searchMavenCentralByArtifactId(String artifactId)` | Maven Central を `a:"artifactId"` で最大 20 件検索し、`versionCount` 最大の `[g, a]` を返す。 |
+| `searchMavenCentralByQuery(String query)` | 名前検索。まず `a:"query"`、無ければ一般 `q=`。いずれも `searchMavenCentralName` 経由で `versionCount` 最大（artifactId 一致優先）の `[g, a]` を返す。 |
+| `searchMavenCentralName(String query, boolean artifactIdQuery)` | Maven Central Search API を呼び、`selectMavenNameSearchHit` でヒットを選ぶ。 |
+| `selectMavenNameSearchHit(json, String query)` | `artifactId` がクエリと一致するドキュメントを優先し、`versionCount` が最大の `[g, a]` を返す（人気順の近似）。 |
 | `addSystemScopeDependency(File projectDir, File jar, List<Dependency> scannedDeps)` | SHA-1 および名前検索でも見つからなかった JAR を、`groupId: local.dependency`、`system` スコープ、`systemPath` に `\${project.basedir}/相対パス` を設定して `scannedDeps` に追加する。 |
 
 ---
@@ -180,7 +182,7 @@ flowchart TB
     P2 --> P3[Maven Central 検索]
     P3 --> P3b{ヒット?}
     P3b -->|No| P3c[stripVersionFromJarBaseName]
-    P3c --> P3d[q= で searchMavenCentralByQuery]
+    P3c --> P3d[a: + versionCount で searchMavenCentralByQuery]
     P3d --> P3e{ヒット?}
     P3e -->|Yes| P3f[getLatestVersion で Dependency 追加]
     P3e -->|No| P3g[addSystemScopeDependency]
@@ -321,7 +323,7 @@ flowchart TB
 ## 処理の流れ（概要・テキスト）
 
 1. **起動** … `main` → `run` → `loadI18n` / `setupConfig` / `setupUI`
-2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR 収集・excludeJarPaths 除外 → SHA-1 → `searchMavenCentral`、未ヒット時は `stripVersionFromJarBaseName` + `searchMavenCentralByQuery`（`q=` のみ）または `addSystemScopeDependency`）→ `generatePom`（除外・置換・追加 → `getLatestVersion(..., currentVersion)`（同一メジャー・プレリリース除外）／`isNewerVersion` → POM 出力）。履歴は `saveProjectPathHistory` / `saveConfigPathHistoryToFile` でテキストファイルに保存。
+2. **POM 生成** … `startProcess` →（上書き確認）→ `processDirectory`（JAR 収集・excludeJarPaths 除外 → SHA-1 → `searchMavenCentral`、未ヒット時は `stripVersionFromJarBaseName` + `searchMavenCentralByQuery`（`a:"name"` + `versionCount` 最大）または `addSystemScopeDependency`）→ `generatePom`（除外・置換・追加 → `getLatestVersion(..., currentVersion)`（同一メジャー・プレリリース除外）／`isNewerVersion` → POM 出力）。履歴は `saveProjectPathHistory` / `saveConfigPathHistoryToFile` でテキストファイルに保存。
 3. **pom.xml 依存関係最新化** … `updatePomDependenciesToLatest` → 設定再読み込み → DOM パース → 各 dependency で `isExcludedFromVersionUpgrade`／`getLatestVersion(g, a, currentVer)`／`isNewerVersion` → `serializeDomDocument` で保存
 4. **CSV エクスポート** … `exportDependenciesToCsv` → `getProjectPomFile` → `parseDependenciesFromPom` → ファイル保存
 5. **CSV インポート** … `importDependenciesFromCsv` → `getProjectPomFile` → CSV 読み込み → XmlParser で pom 編集 → 保存
