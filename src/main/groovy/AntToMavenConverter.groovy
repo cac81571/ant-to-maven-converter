@@ -581,7 +581,7 @@ class AntToMavenTool {
     private void processDirectory(File projectDir, File outputPomFile) {
         log(i18n('log.scanning', projectDir.absolutePath))
 
-        def excludeJarPathPatterns = config.excludeJarPaths instanceof Collection ? config.excludeJarPaths : []
+        def excludeJarPathPatterns = asConfigList(config.excludeJarPaths)
         def pathMatchers = excludeJarPathPatterns.collect { pattern ->
             try {
                 FileSystems.default.getPathMatcher("glob:${pattern}")
@@ -707,18 +707,42 @@ class AntToMavenTool {
         List<String> excludedKeys = []
 
         // ConfigObjectを安全なList/Map型にキャスト
-        def excludes = config.excludeDependencies instanceof Collection ? config.excludeDependencies : []
-        def additions = config.addDependencies instanceof Collection ? config.addDependencies : []
+        def excludes = asConfigList(config.excludeDependencies)
+        def additions = asConfigList(config.addDependencies)
         def replacements = config.replaceDependencies instanceof Map ? config.replaceDependencies : [:]
-        def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
+        def excludeFromVersionUpgrade = asConfigList(config.excludeFromVersionUpgrade)
 
         debugLog("excludes=${excludes}")
-        debugLog("additions.size=${additions instanceof Collection ? additions.size() : 0}")
+        debugLog("additions=${additions}")
         debugLog("replacements.keys=${replacements instanceof Map ? replacements.keySet() : []}")
 
-        // 1. 除外と置換の適用 (scannedDependenciesを使用)
+        // 1. addDependencies を先に確定（検出済みと同じ G:A でも設定を優先し、先頭に置く）
+        List<Dependency> addedDeps = []
+        additions.each { add ->
+            Dependency parsed = parseConfiguredDependency(add)
+            if (!parsed) {
+                log(i18n('log.addSkippedInvalid', String.valueOf(add)))
+                debugLog("addDependencies skip (invalid): ${add}")
+                return
+            }
+            String key = "${parsed.groupId}:${parsed.artifactId}"
+            if (processedKeys.contains(key)) {
+                debugLog("addDependencies skip (duplicate in config): ${key}")
+                return
+            }
+            parsed.dependencyComment = i18n('comment.add', parsed.groupId, parsed.artifactId, parsed.version)
+            addedDeps << parsed
+            processedKeys.add(key)
+            log(i18n('log.added', parsed.groupId, parsed.artifactId, parsed.version))
+        }
+
+        // 2. 除外と置換の適用 (scannedDependenciesを使用)
         scannedDependencies.each { dep ->
             String key = "${dep.groupId}:${dep.artifactId}"
+            if (processedKeys.contains(key)) {
+                debugLog("scanned ${key} skipped; already in addDependencies")
+                return
+            }
             
             // Exclude check
             if (excludes.contains(key)) {
@@ -767,37 +791,9 @@ class AntToMavenTool {
             }
         }
 
-        // 2. 追加設定の適用（要素は String "g:a:v" または Map(groupId, artifactId, version)）
-        additions.each { add ->
-            String g, a, v, s, c
-            if (add instanceof String) {
-                def parts = add.split(':')
-                if (parts.length >= 3) { g = parts[0]; a = parts[1]; v = parts[2] }
-            } else if (add instanceof Map) {
-                g = add.groupId ?: add.get('groupId')?.toString()
-                a = add.artifactId ?: add.get('artifactId')?.toString()
-                v = add.version ?: add.get('version')?.toString()
-                s = add.scope ?: add.get('scope')?.toString()
-                c = add.classifier ?: add.get('classifier')?.toString()
-            }
-            if (g && a && v) {
-                String key = "${g}:${a}"
-                if (!processedKeys.contains(key)) {
-                    log(i18n('log.added', g, a, v))
-                    finalDependencies << new Dependency(
-                        groupId: g,
-                        artifactId: a,
-                        version: v,
-                        scope: s,
-                        classifier: c,
-                        dependencyComment: i18n('comment.add', g, a, v)
-                    )
-                    processedKeys.add(key)
-                }
-            }
-        }
-
         // 3. バージョンアップの適用（「バージョンを最新にする」がオンのとき、追加・除外・置換後の一覧に対して実施）
+        List<Dependency> scannedOrReplaced = finalDependencies.sort { it.groupId ?: '' }
+        finalDependencies = addedDeps + scannedOrReplaced
         if (latestVersionCheck?.selected) {
             log("\n" + i18n('log.versionUpgrade'))
             finalDependencies.each { dep ->
@@ -885,6 +881,62 @@ class AntToMavenTool {
         outputPomFile.text = writer.toString()
         log("\n" + i18n('log.pomSuccess', outputPomFile.name))
         JOptionPane.showMessageDialog(mainFrame, i18n('msg.pomComplete', outputPomFile.absolutePath))
+    }
+
+    /** ConfigSlurper のリスト／単一 Map／空 ConfigObject を List に正規化する */
+    private static List asConfigList(def value) {
+        if (value == null) return []
+        if (value instanceof ConfigObject) {
+            if (value.isEmpty()) return []
+            if (value.containsKey('groupId') || value.containsKey('artifactId') || value.containsKey('key')) {
+                return [value]
+            }
+            return value.values().toList().findAll { it != null }
+        }
+        if (value instanceof Collection) return value.toList()
+        if (value instanceof Map) return [value]
+        return [value]
+    }
+
+    /** addDependencies の 1 要素（"g:a:v" または Map）を Dependency にする。不正なら null */
+    private static Dependency parseConfiguredDependency(def add) {
+        String g = null, a = null, v = null, s = null, c = null
+        if (add instanceof CharSequence) {
+            def parts = add.toString().trim().split(':')
+            if (parts.length >= 3) {
+                g = parts[0]
+                a = parts[1]
+                v = parts[2]
+            }
+        } else if (add instanceof Map) {
+            g = configEntryString(add, 'groupId')
+            a = configEntryString(add, 'artifactId')
+            v = configEntryString(add, 'version')
+            s = configEntryString(add, 'scope')
+            c = configEntryString(add, 'classifier')
+        }
+        if (!g || !a || !v) return null
+        return new Dependency(
+            groupId: g,
+            artifactId: a,
+            version: v,
+            scope: s ?: 'compile',
+            classifier: c
+        )
+    }
+
+    private static String configEntryString(def map, String key) {
+        def val
+        try {
+            val = map[key]
+        } catch (Exception ignored) {
+            val = null
+        }
+        if (val == null && map instanceof Map) val = map.get(key)
+        if (val == null) return null
+        if (val instanceof ConfigObject && ((ConfigObject) val).isEmpty()) return null
+        String text = val.toString()?.trim()
+        return text ? text : null
     }
 
     /** 選択中のプロジェクトフォルダと pom.xml を返す。無効なら null */
@@ -1080,7 +1132,7 @@ class AntToMavenTool {
                 if (debugFile) log(i18n('log.debugFile', debugFile.absolutePath))
                 debugLog("pom=${pom.absolutePath}")
                 debugLog("outputPom=${pomOut.absolutePath}")
-                def excludeFromVersionUpgrade = config.excludeFromVersionUpgrade instanceof Collection ? config.excludeFromVersionUpgrade : []
+                def excludeFromVersionUpgrade = asConfigList(config.excludeFromVersionUpgrade)
 
                 // DOM パーサー（コメントを保持する設定）
                 def factory = DocumentBuilderFactory.newInstance()
@@ -1191,7 +1243,7 @@ class AntToMavenTool {
             if (excludedKeys) {
                 excludedKeys.each { key -> mkp.yieldUnescaped('\n  <!-- ' + i18n('comment.excluded', key) + ' -->') }
             }
-            finalDependencies.sort { it.groupId }.each { dep ->
+            finalDependencies.each { dep ->
                 if (dep.dependencyComment) {
                     mkp.yieldUnescaped('\n    ')
                     mkp.comment(dep.dependencyComment)
