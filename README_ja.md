@@ -10,7 +10,7 @@
 
 - **GUI 操作** … Swing によるウィンドウで、プロジェクトパス選択・実行・ログ確認が可能
 - **JAR の自動検出** … 指定ディレクトリ以下を再帰的にスキャンし、`.jar` を収集
-- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search](https://central.sonatype.com/)（`https://central.sonatype.com/solrsearch/select`）で groupId / artifactId / version を検索。SHA-1 の完全一致だけは `https://search.maven.org/solrsearch/select` を使います（新 API ではチェックサムがユニークに引けないため）。SHA-1 で見つからない場合の **名前検索** は `a:JARベース名` で最大 20 件取得し、`versionCount` が最大のアーティファクトを選びます。ヒットが無ければ一般 `q=` 検索にフォールバックします。
+- **Maven Central 照合** … 各 JAR の SHA-1 を計算し、[Maven Central Search](https://central.sonatype.com/)（`https://central.sonatype.com/solrsearch/select`）で groupId / artifactId / version を検索。SHA-1 の完全一致だけは `https://search.maven.org/solrsearch/select` を使います（新 API ではチェックサムがユニークに引けないため）。SHA-1 で見つからない場合の **名前検索** は `a:JARベース名` で最大 20 件取得し、上位から `nameSearchVerifyMax` 件（デフォルト 3、`0` で制限なし）まで `{artifact}-{version}.jar.sha1` とローカル JAR の SHA-1 を照合し、一致したときだけ採用します（ファイル名のバージョンを優先）。ヒットが無ければ一般 `q=` 検索にフォールバックします。
 - **設定ファイル** … Groovy の ConfigSlurper 形式で「除外」「追加」「置換」を柔軟に指定可能
 - **最新バージョン検索** … オプションで検出したアーティファクトを最新版にアップグレード（Maven Central の **maven-metadata.xml** を参照）。プレリリース（alpha / beta / rc / SNAPSHOT 等）は除外し、メジャーバージョンは変更しません。`preReleaseVersionPatterns` で除外文字列を設定可能。
 - **pom.xml 依存関係最新化** … 既存の `pom.xml` の依存バージョンを Maven Central の最新に更新するボタン（DOM でコメントを保持、`excludeFromVersionUpgrade` を尊重）
@@ -95,6 +95,7 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 | `apiRetryWaitMs` | タイムアウト時の再試行待機時間（ミリ秒） |
 | `apiMinIntervalMs` | API 呼び出し間の最小間隔（ミリ秒、スロットリング） |
 | `apiRateLimitBackoffMs` | HTTP 429/503 時の追加待機時間（ミリ秒） |
+| `nameSearchVerifyMax` | 名前検索で SHA-1 照合する候補の最大件数。デフォルト 3。`0` で制限なし（最大 20 件） |
 | `debugLogEnabled` | デバッグログをファイル出力するか。未設定時は有効 |
 | `debugLogDir` | デバッグログの出力ディレクトリ。未設定時は `~/.ant-to-maven-converter/logs/` |
 | `sha1CacheEnabled` | SHA-1 検索結果をローカルにキャッシュするか。未設定時は有効 |

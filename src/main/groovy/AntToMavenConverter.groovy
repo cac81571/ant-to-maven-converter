@@ -64,6 +64,8 @@ class AntToMavenTool {
     /** Maven Central リポジトリベースURL（maven-metadata.xml 取得用。REST API より最新情報の反映が早い） */
     private static final String MAVEN_REPO_BASE = "https://repo1.maven.org/maven2"
     private static final int NAME_SEARCH_ROWS = 20
+    /** 名前検索で .jar.sha1 を照合する候補の最大件数。0 は制限なし。設定 nameSearchVerifyMax で上書き */
+    private static final int NAME_SEARCH_VERIFY_MAX_DEFAULT = 3
     private static final int API_CONNECT_TIMEOUT_MS = 3000
     private static final int API_READ_TIMEOUT_MS = 4000
     private static final int API_RETRY_COUNT = 6
@@ -711,28 +713,28 @@ class AntToMavenTool {
                     // SHA1 でヒットしなかった場合: a:artifactId 検索は行わず、q=JARファイル名（拡張子・バージョン番号なし）で一般検索のみ行う
                     String baseName = jar.name.toLowerCase().endsWith('.jar') ? jar.name[0..-5] : jar.name
                     String nameForSearch = stripVersionFromJarBaseName(baseName)
-                    debugLog("SHA-1 miss; fallback query='${nameForSearch}' (baseName='${baseName}')")
+                    String fileVersion = extractVersionFromJarBaseName(baseName)
+                    debugLog("SHA-1 miss; fallback query='${nameForSearch}' fileVersion=${fileVersion} (baseName='${baseName}')")
                     if (nameForSearch) Thread.sleep(200)  // レートリミット対策
-                    def fallback = nameForSearch ? searchMavenCentralByQuery(nameForSearch) : null
-                    if (fallback) {
-                        Thread.sleep(200)  // レートリミット対策
-                        def latestInfo = getLatestVersionInfo(fallback.g, fallback.a)
-                        String latestVer = latestInfo?.version
-                        if (latestVer) {
-                            String relativePath = getRelativePath(projectDir, jar)
-                            log(i18n('log.foundByArtifactId', jar.name, relativePath, fallback.g, fallback.a, latestVer))
-                            scannedDeps << new Dependency(
-                                groupId: fallback.g,
-                                artifactId: fallback.a,
-                                version: latestVer,
-                                scope: 'compile',
-                                originalFile: jar,
-                                versionSourceComment: latestInfo?.sourceUrl ? i18n('comment.versionSourceUrl', latestInfo.sourceUrl) : null
-                            )
-                        } else {
-                            addSystemScopeDependency(projectDir, jar, scannedDeps)
-                        }
+                    List candidates = nameForSearch ? listMavenNameSearchHits(nameForSearch) : []
+                    def verified = findVerifiedNameSearchMatch(candidates, sha1, fileVersion)
+                    if (verified) {
+                        String relativePath = getRelativePath(projectDir, jar)
+                        log(i18n('log.nameSearchVerified', jar.name, relativePath, verified.g, verified.a, verified.v))
+                        storeSha1CacheHit(sha1, verified)
+                        scannedDeps << new Dependency(
+                            groupId: verified.g,
+                            artifactId: verified.a,
+                            version: verified.v,
+                            scope: 'compile',
+                            originalFile: jar,
+                            versionSourceComment: verified.sourceUrl ? i18n('comment.versionSourceUrl', verified.sourceUrl) : null
+                        )
                     } else {
+                        if (candidates) {
+                            log(i18n('log.nameSearchSha1Mismatch', jar.name, nameForSearch))
+                            debugLog("name search candidates failed SHA-1 verify: ${candidates.collect { "${it.g}:${it.a}" }}")
+                        }
                         addSystemScopeDependency(projectDir, jar, scannedDeps)
                     }
                 }
@@ -1415,6 +1417,7 @@ class AntToMavenTool {
         try {
             def value = config?."${key}"
             if (value == null) return defaultValue
+            if (value instanceof ConfigObject) return ((ConfigObject) value).isEmpty() ? defaultValue : Integer.parseInt(value.toString().trim())
             if (value instanceof Number) return ((Number) value).intValue()
             String text = value.toString()?.trim()
             return text ? Integer.parseInt(text) : defaultValue
@@ -1623,6 +1626,13 @@ class AntToMavenTool {
         (withoutVer != null && withoutVer != baseName) ? withoutVer.trim() : baseName
     }
 
+    /** ファイル名末尾のバージョンを返す。例: jackson-databind-2.22.2 -> 2.22.2。無ければ null */
+    private static String extractVersionFromJarBaseName(String baseName) {
+        if (!baseName?.trim()) return null
+        def m = (baseName.trim() =~ /-(\d+(?:\.\d+)*(?:-[a-zA-Z0-9.]+)?)$/)
+        return m.find() ? m.group(1) : null
+    }
+
     /**
      * artifactId で Maven Central を検索し、人気（versionCount）が最大の groupId / artifactId を返す。
      * バージョンは getLatestVersion で取得すること。
@@ -1693,6 +1703,140 @@ class AntToMavenTool {
         }
         debugLog("  selected: g=${selected.g} a=${selected.a} versionCount=${selected.versionCount} (exactArtifactId=${!exact.isEmpty()})")
         return [g: selected.g, a: selected.a]
+    }
+
+    /** 名前検索の候補を artifactId 一致優先で並べたリスト（[g, a, latestVersion]）を返す */
+    private List listMavenNameSearchHits(String query) {
+        def json = fetchMavenNameSearchJson(query, true)
+        if (!hasMavenSearchDocs(json)) {
+            debugLog("name search: a: miss; fallback to general q=")
+            json = fetchMavenNameSearchJson(query, false)
+        }
+        return rankMavenNameSearchDocs(json, query)
+    }
+
+    private def fetchMavenNameSearchJson(String query, boolean artifactIdQuery) {
+        try {
+            String q = artifactIdQuery ? "a:${query}" : query
+            String url = "${MAVEN_SEARCH_API}?q=${URLEncoder.encode(q, "UTF-8")}&rows=${NAME_SEARCH_ROWS}&wt=json"
+            debugLog("name search query=${q}")
+            debugLog("  URL: ${url}")
+            String jsonText = fetchUrlTextWithRetry(url)
+            def json = jsonSlurper.parseText(jsonText)
+            def numFound = json?.response?.numFound
+            def docs = json?.response?.docs
+            int shown = (docs instanceof Collection) ? docs.size() : 0
+            debugLog("  numFound=${numFound} shown=${shown}")
+            if (docs instanceof Collection) {
+                docs.eachWithIndex { doc, i ->
+                    debugLog("  hit[${i}]: g=${doc.g} a=${doc.a} latest=${doc.latestVersion ?: doc.v} versionCount=${doc.versionCount} id=${doc.id}")
+                }
+            }
+            return json
+        } catch (Exception e) {
+            debugLog("name search error: ${e.message}")
+            return null
+        }
+    }
+
+    private static boolean hasMavenSearchDocs(def json) {
+        def docs = json?.response?.docs
+        return docs instanceof Collection && !docs.isEmpty()
+    }
+
+    private static List rankMavenNameSearchDocs(def json, String query) {
+        def docs = json?.response?.docs
+        if (!(docs instanceof Collection) || docs.isEmpty()) return []
+        String q = query?.trim()?.toLowerCase()
+        def exact = docs.findAll { it.a?.toString()?.toLowerCase() == q }
+        def rest = docs.findAll { it.a?.toString()?.toLowerCase() != q }
+        Set seen = new LinkedHashSet()
+        List ranked = []
+        (exact + rest).each { doc ->
+            String g = doc.g?.toString()
+            String a = doc.a?.toString()
+            if (!g || !a) return
+            String key = "${g}:${a}"
+            if (!seen.add(key)) return
+            ranked << [g: g, a: a, latestVersion: (doc.latestVersion ?: doc.v)?.toString()]
+        }
+        return ranked
+    }
+
+    /**
+     * 名前検索の候補について .jar.sha1 を照合する。不一致・取得失敗なら次の候補へ進む。
+     * ファイル名のバージョンがあればそれを試し、無ければ（または不一致なら）latestVersion も試す。
+     * 照合する G:A 件数は nameSearchVerifyMax（デフォルト 3、0 は制限なし）で打ち切る。
+     */
+    private def findVerifiedNameSearchMatch(List candidates, String localSha1, String fileVersion) {
+        if (!candidates || !localSha1) return null
+        String want = localSha1.toLowerCase()
+        int total = candidates.size()
+        int maxVerify = getNameSearchVerifyMax()
+        int limit = maxVerify > 0 ? Math.min(total, maxVerify) : total
+        debugLog("name search verify candidates=${total} max=${maxVerify > 0 ? maxVerify : 'unlimited'} trying=${limit}")
+        for (int i = 0; i < limit; i++) {
+            def c = candidates[i]
+            List versions = []
+            if (fileVersion) versions << fileVersion
+            if (c.latestVersion && c.latestVersion != fileVersion) versions << c.latestVersion
+            versions = versions.findAll { it }.unique()
+            if (!versions) {
+                debugLog("name search skip candidate ${i + 1}/${limit} ${c.g}:${c.a} (no version)")
+                continue
+            }
+            for (int vIdx = 0; vIdx < versions.size(); vIdx++) {
+                String ver = versions[vIdx]
+                boolean hasMore = (vIdx < versions.size() - 1) || (i < limit - 1)
+                try {
+                    log(i18n('log.nameSearchCandidate', (i + 1).toString(), limit.toString(), c.g, c.a, ver))
+                    String sourceUrl = remoteJarSha1Url(c.g, c.a, ver)
+                    String remote = fetchRemoteJarSha1(c.g, c.a, ver)
+                    debugLog("name search verify ${i + 1}/${limit} ${c.g}:${c.a}:${ver}")
+                    debugLog("  SHA-1 URL: ${sourceUrl}")
+                    debugLog("  remote=${remote ?: '(none)'} local=${want}")
+                    if (remote && remote.equalsIgnoreCase(want)) {
+                        debugLog("  SHA-1 match")
+                        return [g: c.g, a: c.a, v: ver, sourceUrl: sourceUrl]
+                    }
+                    String resultKey = remote ? 'log.nameSearchCandidateMismatch' : 'log.nameSearchCandidateMissing'
+                    log(i18n(resultKey) + (hasMore ? i18n('log.nameSearchTryNext') : ''))
+                } catch (Exception e) {
+                    debugLog("name search verify error ${c.g}:${c.a}:${ver}: ${e.message}")
+                    boolean hasMoreOnError = (vIdx < versions.size() - 1) || (i < limit - 1)
+                    log(i18n('log.nameSearchCandidateMissing') + (hasMoreOnError ? i18n('log.nameSearchTryNext') : ''))
+                }
+            }
+        }
+        if (total > limit) {
+            log(i18n('log.nameSearchVerifyMaxReached', limit.toString(), total.toString()))
+            debugLog("name search verify stopped at ${limit}/${total} (nameSearchVerifyMax)")
+        }
+        return null
+    }
+
+    /** 名前検索の SHA-1 照合で試す候補数の上限。0 は制限なし。負数や不正値はデフォルト */
+    private int getNameSearchVerifyMax() {
+        int n = getApiConfigInt('nameSearchVerifyMax', NAME_SEARCH_VERIFY_MAX_DEFAULT)
+        return n < 0 ? NAME_SEARCH_VERIFY_MAX_DEFAULT : n
+    }
+
+    private static String remoteJarSha1Url(String groupId, String artifactId, String version) {
+        String path = groupId.replace('.', '/')
+        return "${MAVEN_REPO_BASE}/${path}/${artifactId}/${version}/${artifactId}-${version}.jar.sha1"
+    }
+
+    /** repo1 の .jar.sha1 を取得して 40 桁 hex を返す。無ければ null */
+    private String fetchRemoteJarSha1(String groupId, String artifactId, String version) {
+        String url = remoteJarSha1Url(groupId, artifactId, version)
+        try {
+            String body = fetchUrlTextWithRetry(url, null, null, 1)
+            def m = (body?.trim() =~ /(?i)\b([a-f0-9]{40})\b/)
+            return m.find() ? m.group(1).toLowerCase() : null
+        } catch (Exception e) {
+            debugLog("  remote sha1 fetch failed: ${e.message}")
+            return null
+        }
     }
 
     /** SHA1 でも名前検索でも見つからなかった場合に system スコープで依存を追加する */

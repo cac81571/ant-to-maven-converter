@@ -10,7 +10,7 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 
 - **GUI** … Swing window for project path selection, execution, and log viewing
 - **JAR discovery** … Recursively scans the chosen directory and collects `.jar` files
-- **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search](https://central.sonatype.com/) (`https://central.sonatype.com/solrsearch/select`) for groupId / artifactId / version. SHA-1 exact match still uses `https://search.maven.org/solrsearch/select` (the new endpoint does not uniquely resolve checksums). If SHA-1 misses, **name search** uses `a:jar-basename` (up to 20 hits) and picks the artifact with the highest `versionCount` (a popularity proxy). If that misses, a general `q=` search with the same ranking is used.
+- **Maven Central lookup** … Computes SHA-1 for each JAR and queries [Maven Central Search](https://central.sonatype.com/) (`https://central.sonatype.com/solrsearch/select`) for groupId / artifactId / version. SHA-1 exact match still uses `https://search.maven.org/solrsearch/select` (the new endpoint does not uniquely resolve checksums). If SHA-1 misses, **name search** uses `a:jar-basename` (up to 20 hits) and **verifies** candidates by comparing the local JAR SHA-1 with Maven Central’s `{artifact}-{version}.jar.sha1`, up to `nameSearchVerifyMax` hits (default 3; `0` = no limit). Only a matching GAV is used (the filename version when present). If that misses, a general `q=` search with the same ranking is used.
 - **Config file** … Groovy ConfigSlurper format for flexible “exclude”, “add”, and “replace” rules
 - **Latest version** … Optional upgrade of detected artifacts to their latest versions (uses Maven Central **maven-metadata.xml**). Pre-release versions (alpha, beta, rc, SNAPSHOT, etc.) are excluded, and the major version is not changed. Configurable via `preReleaseVersionPatterns`.
 - **Update pom.xml dependencies** … Button to update dependency versions in an existing `pom.xml` to the latest from Maven Central (preserves comments via DOM; respects `excludeFromVersionUpgrade`)
@@ -95,6 +95,7 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `apiRetryWaitMs` | Wait time (ms) before retry on timeout |
 | `apiMinIntervalMs` | Minimum interval (ms) between API requests (throttling) |
 | `apiRateLimitBackoffMs` | Backoff wait (ms) for HTTP 429/503 |
+| `nameSearchVerifyMax` | Max name-search candidates to SHA-1-verify. Default 3. `0` = no limit (up to 20) |
 | `debugLogEnabled` | Write debug logs to a file. Enabled when unset |
 | `debugLogDir` | Directory for debug log files. Default: `~/.ant-to-maven-converter/logs/` |
 | `sha1CacheEnabled` | Cache SHA-1 lookup results locally. Enabled when unset |

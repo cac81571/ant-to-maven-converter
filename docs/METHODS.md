@@ -57,7 +57,7 @@
 |----------|----------|
 | `startProcess()` | 「POM生成」ボタン押下時の処理。パス検証、既存 pom.xml の上書き確認（上書きする／別名で保存／処理中止）、設定の再読み込み、履歴保存のあと、バックグラウンドで `processDirectory` を実行する。 |
 | `stopProcess()` | 「中止」ボタン押下時。`isRunning` を false にし、処理の停止を要求する（現在の処理の完了を待つ）。 |
-| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名（拡張子・バージョン番号なし）を `stripVersionFromJarBaseName` で取得し、`searchMavenCentralByQuery(nameForSearch)` で Maven Central の名前検索（`a:"name"` + `versionCount` 最大）を行う。ヒットすれば最新版を取得して追加、それでも見つからなければ `addSystemScopeDependency` で system スコープの依存を追加。最後に `generatePom` を呼び出す。 |
+| `processDirectory(File projectDir, File outputPomFile)` | プロジェクト配下の JAR を再帰的に収集（`excludeJarPaths` の glob で除外）。各 JAR の SHA-1 を `calculateSha1` で計算し、`searchMavenCentral(sha1)` で検索。ヒットすれば `Dependency` に追加。見つからない場合は JAR ベース名を `stripVersionFromJarBaseName` / `extractVersionFromJarBaseName` で分解し、`listMavenNameSearchHits` の候補を `findVerifiedNameSearchMatch` で `.jar.sha1` 照合する。一致すればその GAV を追加（SHA-1 キャッシュにも保存）、しなければ `addSystemScopeDependency`。最後に `generatePom` を呼び出す。 |
 | `generatePom(File projectDir, List<Dependency> scannedDependencies, File outputPomFile)` | スキャン結果に設定の除外・置換・追加を適用して `finalDependencies` を組み立てる。`addDependencies` は先に確定し先頭へ置く（スキャンで同じ `groupId:artifactId` があっても設定を優先）。オプションで `getLatestVersion(groupId, artifactId, currentVersion)` によるバージョンアップを適用（同一メジャー内・プレリリース除外。`isNewerVersion` でダウングレード防止）。設定の `pomProjectTemplate` があれば `{{DEPENDENCIES}}` を差し替え、なければ標準の project 構造で pom.xml を生成してファイルに書き出す。 |
 
 ---
@@ -97,7 +97,11 @@
 
 | メソッド | 処理概要 |
 |----------|----------|
-| `stripVersionFromJarBaseName(String baseName)` | JAR のベース名（拡張子除く）から末尾のバージョン部分を除去する。例: `primefaces-15.0.5` → `primefaces`。正規表現で `-数字(.数字)*(-qualifier)?` 形式を削除。 |
+| `stripVersionFromJarBaseName(String baseName)` | JAR のベース名（拡張子除く）から末尾のバージョン部分を除去する。例: `primefaces-15.0.5` → `primefaces`。 |
+| `extractVersionFromJarBaseName(String baseName)` | ファイル名末尾のバージョンを返す。例: `jackson-databind-2.22.2` → `2.22.2`。無ければ null。 |
+| `listMavenNameSearchHits(String query)` | 名前検索の候補リスト（artifactId 一致を優先）を返す。 |
+| `findVerifiedNameSearchMatch(candidates, localSha1, fileVersion)` | 各候補の `{a}-{v}.jar.sha1` を repo1 から取得し、ローカル SHA-1 と一致した `[g, a, v, sourceUrl]` を返す。照合件数は `nameSearchVerifyMax`（デフォルト 3、`0` は制限なし）で打ち切る。 |
+| `fetchRemoteJarSha1(groupId, artifactId, version)` | Maven Central の `.jar.sha1` から 40 桁 hex を返す。 |
 | `searchMavenCentralByArtifactId(String artifactId)` | Maven Central を `a:"artifactId"` で最大 20 件検索し、`versionCount` 最大の `[g, a]` を返す。 |
 | `searchMavenCentralByQuery(String query)` | 名前検索。まず `a:"query"`、無ければ一般 `q=`。いずれも `searchMavenCentralName` 経由で `versionCount` 最大（artifactId 一致優先）の `[g, a]` を返す。 |
 | `searchMavenCentralName(String query, boolean artifactIdQuery)` | `https://central.sonatype.com/solrsearch/select` を呼び、`selectMavenNameSearchHit` でヒットを選ぶ。`a:name` は引用符なし（新 API は `a:"name"` を 0 件にする）。 |

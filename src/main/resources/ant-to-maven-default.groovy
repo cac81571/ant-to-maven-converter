@@ -95,6 +95,11 @@ preReleaseVersionPatterns = [
 // 出力先ディレクトリを変える場合:
 // debugLogDir = 'C:/logs/ant-to-maven-converter'
 
+// --- 名前検索の SHA-1 照合（未設定時は 3 件）---
+// SHA-1 検索が外れたあと、名前検索のヒットを上から順に .jar.sha1 で照合する件数の上限。
+// 0 は制限なし（検索 API の最大 20 件まで）。
+// nameSearchVerifyMax = 3
+
 // --- SHA-1 検索キャッシュ（未設定時は有効）---
 // JAR の SHA-1 -> groupId/artifactId/version を ~/.ant-to-maven-converter/cache/sha1-cache.json に保存し、次回の API 検索を省略する。
 // ヒット（見つかった結果）は期限なし。未ヒットは sha1CacheMissTtlDays 日後に再検索する。
