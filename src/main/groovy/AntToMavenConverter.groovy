@@ -11,6 +11,7 @@
  * - ローカルJAR (System Scope) のフォールバック処理
  */
 
+import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.swing.SwingBuilder
 import groovy.xml.MarkupBuilder
@@ -81,6 +82,12 @@ class AntToMavenTool {
     private static final String PROJECT_HISTORY_FILE = "project-history.txt"
     /** 設定ファイルパス履歴を保存するテキストファイル（1行1パス、UTF-8） */
     private static final String CONFIG_HISTORY_FILE = "config-history.txt"
+    /** SHA-1 検索キャッシュの保存先（user.home 配下 .ant-to-maven-converter/cache） */
+    private static final String SHA1_CACHE_DIR_NAME = "cache"
+    private static final String SHA1_CACHE_FILE = "sha1-cache.json"
+    private static final Object SHA1_CACHE_LOCK = new Object()
+    /** 未ヒット（miss）キャッシュのデフォルト有効日数。ヒットは期限なし */
+    private static final int SHA1_CACHE_MISS_TTL_DAYS = 30
     /** デバッグログのデフォルト配置ディレクトリ名（user.home 配下 .ant-to-maven-converter/logs） */
     private static final String DEBUG_LOG_DIR_NAME = "logs"
     private static final DateTimeFormatter DEBUG_LOG_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
@@ -120,6 +127,9 @@ class AntToMavenTool {
     private JsonSlurper jsonSlurper = new JsonSlurper()
     private Properties i18nMessages = new Properties()
     private String cachedAppVersion
+    private Map sha1Cache
+    private int sha1CacheHits
+    private int sha1CacheFetches
 
     static void main(String[] args) {
         new AntToMavenTool().run()
@@ -655,6 +665,8 @@ class AntToMavenTool {
         }
 
         log(i18n('log.jarsFound', jars.size().toString()))
+        sha1CacheHits = 0
+        sha1CacheFetches = 0
         
         List<Dependency> scannedDeps = []
         int count = 0
@@ -664,7 +676,7 @@ class AntToMavenTool {
             
             count++
             updateProgress(count, jars.size(), i18n('log.analyzing', jar.name))
-            
+            def artifact = null
             try {
                 String relativeJarPath = getRelativePath(projectDir, jar)
                 debugLog("---- JAR ${count}/${jars.size()} ----")
@@ -676,7 +688,7 @@ class AntToMavenTool {
                 }
                 String sha1 = calculateSha1(jar)
                 debugLog("sha1=${sha1}")
-                def artifact = searchMavenCentral(sha1)
+                artifact = searchMavenCentral(sha1)
                 
                 if (artifact) {
                     // 日付形式バージョンの警告チェック (例: 20040616)
@@ -730,8 +742,15 @@ class AntToMavenTool {
                 debugLog(stackTraceOf(e))
             }
             
-            // APIレートリミット対策
-            Thread.sleep(200) 
+            // SHA-1 キャッシュヒット時は追加の待機を省略
+            if (!artifact?.fromCache) {
+                Thread.sleep(200)
+            }
+        }
+
+        if (sha1CacheHits > 0 || sha1CacheFetches > 0) {
+            log(i18n('log.sha1CacheStats', sha1CacheHits.toString(), sha1CacheFetches.toString()))
+            debugLog("SHA-1 cache hits=${sha1CacheHits} fetches=${sha1CacheFetches}")
         }
 
         if (isRunning.get()) {
@@ -1405,10 +1424,23 @@ class AntToMavenTool {
     }
 
     private def searchMavenCentral(String sha1) {
+        String key = normalizeSha1(sha1)
+        def cached = lookupSha1Cache(key)
+        if (cached != null) {
+            sha1CacheHits++
+            if (cached.miss) {
+                debugLog("SHA-1 cache miss-entry ${key}")
+                return null
+            }
+            debugLog("SHA-1 cache hit ${key} -> ${cached.g}:${cached.a}:${cached.v}")
+            return [g: cached.g, a: cached.a, v: cached.v, sourceUrl: cached.sourceUrl, fromCache: true]
+        }
+
         String url = null
         try {
+            sha1CacheFetches++
             // クエリパラメータをURLエンコード
-            String query = "1:\"${sha1}\""
+            String query = "1:\"${key}\""
             String encodedQuery = URLEncoder.encode(query, "UTF-8")
             url = "${MAVEN_SHA1_SEARCH_API}?q=${encodedQuery}&rows=1&wt=json"
             debugLog("SHA-1 search query=${query}")
@@ -1419,13 +1451,164 @@ class AntToMavenTool {
             debugLogSearchHits(json)
             if (json.response.numFound > 0) {
                 def doc = json.response.docs[0]
-                return [g: doc.g, a: doc.a, v: doc.v, sourceUrl: url]
+                def result = [g: doc.g, a: doc.a, v: doc.v, sourceUrl: url]
+                storeSha1CacheHit(key, result)
+                return result
             }
+            storeSha1CacheMiss(key)
         } catch (Exception e) {
             log(i18n('log.apiError', url, e.message))
             debugLog("SHA-1 search error: ${e.message}")
         }
         return null
+    }
+
+    private static String normalizeSha1(String sha1) {
+        return sha1?.trim()?.toLowerCase() ?: ""
+    }
+
+    private boolean isSha1CacheEnabled() {
+        return getConfigBoolean("sha1CacheEnabled", true)
+    }
+
+    private File getSha1CacheFile() {
+        try {
+            def value = config?.sha1CacheFile
+            if (value instanceof CharSequence) {
+                String text = value.toString().trim()
+                if (text) return new File(text)
+            }
+        } catch (Exception ignored) {
+        }
+        return new File(new File(USER_CONFIG_DIR, SHA1_CACHE_DIR_NAME), SHA1_CACHE_FILE)
+    }
+
+    /** 未ヒットキャッシュの TTL（ミリ秒）。0 以下なら未ヒットはキャッシュしない */
+    private long getSha1CacheMissTtlMs() {
+        int days = getApiConfigInt("sha1CacheMissTtlDays", SHA1_CACHE_MISS_TTL_DAYS)
+        return days > 0 ? days * 24L * 60L * 60L * 1000L : 0L
+    }
+
+    private boolean getConfigBoolean(String key, boolean defaultValue) {
+        try {
+            def value = config?."${key}"
+            if (value == null) return defaultValue
+            if (value instanceof ConfigObject) return ((ConfigObject) value).isEmpty() ? defaultValue : Boolean.parseBoolean(value.toString())
+            if (value instanceof Boolean) return (Boolean) value
+            String text = value.toString()?.trim()
+            if (!text) return defaultValue
+            return Boolean.parseBoolean(text)
+        } catch (Exception ignored) {
+            return defaultValue
+        }
+    }
+
+    private void ensureSha1CacheLoaded() {
+        if (sha1Cache != null) return
+        synchronized (SHA1_CACHE_LOCK) {
+            if (sha1Cache != null) return
+            Map loaded = [:]
+            if (isSha1CacheEnabled()) {
+                File file = getSha1CacheFile()
+                if (file.exists() && file.isFile()) {
+                    try {
+                        def parsed = file.withReader("UTF-8") { r -> jsonSlurper.parse(r) }
+                        if (parsed instanceof Map) {
+                            parsed.each { k, v ->
+                                if (k) loaded[k.toString().toLowerCase()] = v
+                            }
+                        }
+                        debugLog("SHA-1 cache loaded entries=${loaded.size()} file=${file.absolutePath}")
+                    } catch (Exception e) {
+                        debugLog("SHA-1 cache load failed: ${e.message}")
+                    }
+                }
+            }
+            sha1Cache = loaded
+        }
+    }
+
+    /** ヒット Map / 未ヒット [miss:true] / 未登録なら null */
+    private def lookupSha1Cache(String sha1) {
+        if (!sha1 || !isSha1CacheEnabled()) return null
+        ensureSha1CacheLoaded()
+        def entry
+        synchronized (SHA1_CACHE_LOCK) {
+            entry = sha1Cache[sha1]
+        }
+        if (!(entry instanceof Map)) return null
+        if (entry.miss) {
+            long ttl = getSha1CacheMissTtlMs()
+            if (ttl <= 0) return null
+            long ts = toLong(entry.ts)
+            if (ts > 0 && (System.currentTimeMillis() - ts) > ttl) {
+                debugLog("SHA-1 cache miss-entry expired ${sha1}")
+                return null
+            }
+            return [miss: true]
+        }
+        String g = entry.g?.toString()
+        String a = entry.a?.toString()
+        String v = entry.v?.toString()
+        if (!g || !a || !v) return null
+        return [g: g, a: a, v: v, sourceUrl: entry.sourceUrl?.toString()]
+    }
+
+    private void storeSha1CacheHit(String sha1, def result) {
+        if (!sha1 || !isSha1CacheEnabled() || !result?.g || !result?.a || !result?.v) return
+        synchronized (SHA1_CACHE_LOCK) {
+            ensureSha1CacheLoaded()
+            sha1Cache[sha1] = [
+                g: result.g.toString(),
+                a: result.a.toString(),
+                v: result.v.toString(),
+                sourceUrl: result.sourceUrl?.toString(),
+                ts: System.currentTimeMillis()
+            ]
+        }
+        persistSha1Cache()
+    }
+
+    private void storeSha1CacheMiss(String sha1) {
+        if (!sha1 || !isSha1CacheEnabled()) return
+        if (getSha1CacheMissTtlMs() <= 0) return
+        synchronized (SHA1_CACHE_LOCK) {
+            ensureSha1CacheLoaded()
+            sha1Cache[sha1] = [miss: true, ts: System.currentTimeMillis()]
+        }
+        persistSha1Cache()
+    }
+
+    private void persistSha1Cache() {
+        if (!isSha1CacheEnabled()) return
+        synchronized (SHA1_CACHE_LOCK) {
+            try {
+                File file = getSha1CacheFile()
+                File dir = file.parentFile
+                if (dir && !dir.exists()) dir.mkdirs()
+                File tmp = new File(dir, file.name + ".tmp")
+                tmp.setText(JsonOutput.prettyPrint(JsonOutput.toJson(sha1Cache ?: [:])), "UTF-8")
+                if (file.exists() && !file.delete()) {
+                    debugLog("SHA-1 cache replace failed: ${file.absolutePath}")
+                    return
+                }
+                if (!tmp.renameTo(file)) {
+                    tmp.withInputStream { ins -> file.withOutputStream { outs -> ins.transferTo(outs) } }
+                    tmp.delete()
+                }
+            } catch (Exception e) {
+                debugLog("SHA-1 cache save failed: ${e.message}")
+            }
+        }
+    }
+
+    private static long toLong(def value) {
+        if (value instanceof Number) return ((Number) value).longValue()
+        try {
+            return value ? Long.parseLong(value.toString()) : 0L
+        } catch (Exception ignored) {
+            return 0L
+        }
     }
 
     /**

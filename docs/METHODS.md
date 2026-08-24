@@ -124,7 +124,10 @@
 |----------|----------|
 | `buildDependenciesSection(MarkupBuilder builder, List<Dependency> finalDependencies, List<String> excludedKeys)` | MarkupBuilder に `<dependencies>` ブロックを出力する。除外された key をコメントで列挙し、各 Dependency の dependencyComment / versionComment / scope / systemPath / classifier を反映する。 |
 | `calculateSha1(File file)` | ファイルの SHA-1 ハッシュを計算して 16 進文字列で返す。 |
-| `searchMavenCentral(String sha1)` | SHA-1 で検索し、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。完全一致は `https://search.maven.org/solrsearch/select`（`1:"sha1"`）を使う。見つからなければ null。 |
+| `searchMavenCentral(String sha1)` | SHA-1 で検索し、一致したアーティファクトの groupId / artifactId / version を `[g, a, v]` 形式で返す。先にローカルキャッシュ（`~/.ant-to-maven-converter/cache/sha1-cache.json`）を参照し、無ければ `https://search.maven.org/solrsearch/select`（`1:"sha1"`）を使う。見つからなければ null。 |
+| `lookupSha1Cache(String sha1)` | SHA-1 キャッシュを参照する。ヒット Map、未ヒット `[miss:true]`、未登録/無効時は null。 |
+| `storeSha1CacheHit(String sha1, result)` / `storeSha1CacheMiss(String sha1)` | SHA-1 のヒット／未ヒットをキャッシュに保存してファイルへ書き出す。 |
+| `persistSha1Cache()` | `sha1-cache.json` を UTF-8 で書き出す（tmp 経由で置換）。 |
 | `getLatestVersion(String groupId, String artifactId, String currentVersion)` | Maven Central の **maven-metadata.xml** を取得し、`<versions>` 一覧から **プレリリース除外**（`isPreReleaseVersion` / 設定の `preReleaseVersionPatterns`）および **同一メジャー**（`currentVersion` 指定時は `getMajorVersion` で同じメジャーのみ）に絞ったうえで最大バージョンを返す。取得できない場合は null。 |
 | `isPreReleaseVersion(String version, List<String> patterns)` | バージョン文字列がプレリリースかどうか判定。`patterns` 未指定時はデフォルト（alpha, beta, -rc, .rc, snapshot, milestone, preview）を使用。大文字小文字無視。 |
 | `getMajorVersion(String version)` | バージョン文字列からメジャーバージョン（先頭の数値）を取得。取得できない場合は null。 |

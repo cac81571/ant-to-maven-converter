@@ -20,6 +20,7 @@ A GUI tool that scans legacy Ant project folders (e.g. `lib`), computes JAR SHA-
 - **CSV export/import** … Export dependencies from `pom.xml` to CSV, or import from CSV into `pom.xml`
 - **History in text files** … Project folder and config file paths are stored under `~/.ant-to-maven-converter/` as `project-history.txt` and `config-history.txt` (one path per line, UTF-8).
 - **Debug log file** … On POM generation or dependency update, search URLs and hit details (groupId / artifactId / version, numFound, HTTP status) are written to `~/.ant-to-maven-converter/logs/debug-yyyyMMdd-HHmmss.log` (not shown in the GUI log). Controlled by `debugLogEnabled` / `debugLogDir`.
+- **SHA-1 search cache** … Successful SHA-1 lookups are stored in `~/.ant-to-maven-converter/cache/sha1-cache.json` so later runs skip the Maven Central API. Hits never expire (checksum uniquely identifies a JAR). Negative results are retried after `sha1CacheMissTtlDays` (default 30).
 
 ## Requirements
 
@@ -96,6 +97,9 @@ Configuration is in **Groovy ConfigSlurper** format.
 | `apiRateLimitBackoffMs` | Backoff wait (ms) for HTTP 429/503 |
 | `debugLogEnabled` | Write debug logs to a file. Enabled when unset |
 | `debugLogDir` | Directory for debug log files. Default: `~/.ant-to-maven-converter/logs/` |
+| `sha1CacheEnabled` | Cache SHA-1 lookup results locally. Enabled when unset |
+| `sha1CacheMissTtlDays` | Days before a cached SHA-1 miss is searched again. Default 30. `0` disables miss caching |
+| `sha1CacheFile` | Path to the SHA-1 cache JSON file. Default: `~/.ant-to-maven-converter/cache/sha1-cache.json` |
 | `pomProjectTemplate` | Template for the generated pom; `{{DEPENDENCIES}}` is replaced by the dependencies block |
 
 When a version is obtained or upgraded via API, the generated `pom.xml` may include a comment with the source URL (e.g. Maven metadata URL) near the dependency.

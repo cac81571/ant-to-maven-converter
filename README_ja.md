@@ -20,6 +20,7 @@
 - **CSV エクスポート／インポート** … `pom.xml` の依存関係を CSV にエクスポート、または CSV から `pom.xml` にインポート
 - **履歴のテキスト保存** … プロジェクトフォルダ・設定ファイルのパス履歴は `~/.ant-to-maven-converter/` 配下の `project-history.txt` と `config-history.txt` に 1 行 1 パス（UTF-8）で保存されます。設定ファイルコンボ横の「参照」ボタンでファイル選択ダイアログからパスを指定できます。
 - **デバッグログ** … POM 生成や依存最新化時に、検索 URL・ヒット件数・groupId / artifactId / version などを `~/.ant-to-maven-converter/logs/debug-yyyyMMdd-HHmmss.log` に出力します（GUI のログエリアには出しません）。設定の `debugLogEnabled` / `debugLogDir` で制御できます。
+- **SHA-1 検索キャッシュ** … SHA-1 のヒット結果を `~/.ant-to-maven-converter/cache/sha1-cache.json` に保存し、次回以降の Maven Central API 呼び出しを省略します。ヒットは期限なし（チェックサムは JAR を一意に識別）。未ヒットは `sha1CacheMissTtlDays` 日後に再検索します（デフォルト 30）。
 
 ## 必要環境
 
@@ -96,6 +97,9 @@ java -jar target/ant-to-maven-converter-1.0.0.jar
 | `apiRateLimitBackoffMs` | HTTP 429/503 時の追加待機時間（ミリ秒） |
 | `debugLogEnabled` | デバッグログをファイル出力するか。未設定時は有効 |
 | `debugLogDir` | デバッグログの出力ディレクトリ。未設定時は `~/.ant-to-maven-converter/logs/` |
+| `sha1CacheEnabled` | SHA-1 検索結果をローカルにキャッシュするか。未設定時は有効 |
+| `sha1CacheMissTtlDays` | 未ヒット結果を再検索するまでの日数。デフォルト 30。`0` で未ヒットはキャッシュしない |
+| `sha1CacheFile` | SHA-1 キャッシュ JSON のパス。未設定時は `~/.ant-to-maven-converter/cache/sha1-cache.json` |
 | `pomProjectTemplate` | 生成する pom の雛形。`{{DEPENDENCIES}}` が依存関係ブロックに置換されます |
 
 API 経由でバージョン取得/更新した依存には、取得元 URL（例: `maven-metadata.xml`）が `pom.xml` のコメントとして付与される場合があります。

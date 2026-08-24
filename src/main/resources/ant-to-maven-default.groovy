@@ -94,3 +94,11 @@ preReleaseVersionPatterns = [
 // debugLogEnabled = true
 // 出力先ディレクトリを変える場合:
 // debugLogDir = 'C:/logs/ant-to-maven-converter'
+
+// --- SHA-1 検索キャッシュ（未設定時は有効）---
+// JAR の SHA-1 -> groupId/artifactId/version を ~/.ant-to-maven-converter/cache/sha1-cache.json に保存し、次回の API 検索を省略する。
+// ヒット（見つかった結果）は期限なし。未ヒットは sha1CacheMissTtlDays 日後に再検索する。
+// sha1CacheEnabled = true
+// sha1CacheMissTtlDays = 30
+// 保存先を変える場合:
+// sha1CacheFile = 'C:/cache/sha1-cache.json'
