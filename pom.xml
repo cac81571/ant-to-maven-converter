@@ -68,6 +68,15 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- Run with: mvn compile exec:java -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.6.3</version>
+                <configuration>
+                    <mainClass>AntToMavenTool</mainClass>
+                </configuration>
+            </plugin>
             <!-- Create Executable JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
