@@ -119,6 +119,7 @@ class AntToMavenTool {
     private Preferences prefs = Preferences.userRoot().node(PREF_NODE)
     private JsonSlurper jsonSlurper = new JsonSlurper()
     private Properties i18nMessages = new Properties()
+    private String cachedAppVersion
 
     static void main(String[] args) {
         new AntToMavenTool().run()
@@ -153,7 +154,7 @@ class AntToMavenTool {
 
     /** 言語切り替え時にUIの表示文言を再適用する */
     private void refreshUIStrings() {
-        if (mainFrame != null) mainFrame.title = i18n('app.title')
+        if (mainFrame != null) mainFrame.title = appTitle()
         if (langLabel != null) langLabel.text = i18n('ui.language')
         if (projectRootLabel != null) projectRootLabel.text = i18n('ui.projectRootPath')
         if (configFileLabel != null) configFileLabel.text = i18n('ui.configFile')
@@ -176,6 +177,46 @@ class AntToMavenTool {
     private String i18n(String key, Object... args) {
         String template = i18nMessages.getProperty(key, key)
         return (args == null || args.length == 0) ? template : MessageFormat.format(template, args)
+    }
+
+    /** ウィンドウタイトル（アプリ名 + pom.xml の version） */
+    private String appTitle() {
+        String version = getAppVersion()
+        return version ? "${i18n('app.title')} ${version}" : i18n('app.title')
+    }
+
+    /**
+     * アプリバージョン。Maven がフィルタした /app.properties の project.version を優先し、
+     * 無ければ JAR マニフェストの Implementation-Version を使う。
+     */
+    private String getAppVersion() {
+        if (cachedAppVersion != null) return cachedAppVersion
+        String v = readFilteredAppVersion()
+        if (!v) {
+            try {
+                v = AntToMavenTool.package?.implementationVersion?.trim()
+            } catch (Exception ignored) {
+                v = null
+            }
+        }
+        cachedAppVersion = v ?: ""
+        return cachedAppVersion
+    }
+
+    private String readFilteredAppVersion() {
+        def stream = getClass().getResourceAsStream("/app.properties")
+        if (stream == null) return null
+        try {
+            Properties p = new Properties()
+            p.load(new InputStreamReader(stream, "UTF-8"))
+            String v = p.getProperty("version")?.trim()
+            if (!v || v.contains('${')) return null
+            return v
+        } catch (Exception ignored) {
+            return null
+        } finally {
+            try { stream.close() } catch (Exception ignored) {}
+        }
     }
 
     /** デフォルトの設定ファイル配置ディレクトリ（~/.ant-to-maven-converter/config/） */
@@ -298,7 +339,7 @@ class AntToMavenTool {
 
         SwingBuilder swing = new SwingBuilder()
         swing.edt {
-            mainFrame = frame(title: i18n('app.title'), size: [800, 600],
+            mainFrame = frame(title: appTitle(), size: [800, 600],
                     defaultCloseOperation: closeOperation, locationRelativeTo: null) {
                 borderLayout()
 

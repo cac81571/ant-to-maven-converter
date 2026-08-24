@@ -42,7 +42,10 @@
 | メソッド | 処理概要 |
 |----------|----------|
 | `loadI18n(String lang)` | 指定ロケール（`ja` / `en`）のメッセージプロパティ（`messages_ja.properties` / `messages_en.properties`）を UTF-8 で読み込み、`i18nMessages` に格納する。 |
-| `refreshUIStrings()` | 言語切り替え時に、メインウィンドウ・ラベル・ボタン・チェックボックスなどの表示文言を `i18n` で再適用する。 |
+| `refreshUIStrings()` | 言語切り替え時に、メインウィンドウ・ラベル・ボタン・チェックボックスなどの表示文言を `i18n` で再適用する。タイトルは `appTitle()`（pom.xml の version 付き）。 |
+| `appTitle()` | ウィンドウタイトル。`app.title` に `getAppVersion()` を付けた文字列を返す。 |
+| `getAppVersion()` | `/app.properties`（Maven が `${project.version}` を埋め込んだ値）を読み、無ければ JAR マニフェストの `Implementation-Version` を返す。 |
+| `readFilteredAppVersion()` | クラスパス上の `app.properties` から version を読む。未フィルタの `${...}` は無効として無視する。 |
 | `i18n(String key)` | メッセージキーに対応する文言を返す。 |
 | `i18n(String key, Object... args)` | メッセージキーに対応するテンプレートに `MessageFormat.format` で引数を埋め込んで返す。 |
 
